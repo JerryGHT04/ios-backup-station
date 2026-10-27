@@ -1,0 +1,9 @@
+.git
+.github
+.env
+.env.example
+config
+lockdown
+docs
+*.md
+install.sh

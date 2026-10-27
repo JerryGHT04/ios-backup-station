@@ -1,0 +1,690 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#ffffff">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ios-backup-station">
+<title>ios-backup-station</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6833' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='7' y='2.5' width='10' height='19' rx='2.5'/%3E%3Cpath d='M11 5.5h2'/%3E%3C/svg%3E">
+<style>
+/* Layout: Apple Diagnostics. Pure white page, two round buttons on top, a ring icon, a large left-aligned title with a grey
+   description, then light-grey rounded action cards (icon, text, round button). Details open as bottom sheets. */
+:root{
+  --bg:#ffffff; --card:#f2f2f4; --text:#1c1c1e; --sub:#7b7b82; --line:#e4e4e8;
+  --accent-a:#efeedc; --accent-b:#d8d7c2;      /* the pale yellow of the status strip */
+  --accent:#a19d5a;                              /* ring and line icons */
+  --accent-ink:#6b6833;                          /* text links and glyphs on the pale fill */
+  --track:#e8e8ec; --ok:#2f9e44; --warn:#c98a00; --bad:#d1242f;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI","Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:16px;line-height:1.4;
+  padding-block:10px 56px;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px));
+  -webkit-tap-highlight-color:transparent}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent-ink);outline-offset:2px}
+svg.i{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{max-width:430px;margin:0 auto}
+@media (min-width:600px){.app,.sheet{max-width:560px}}   /* iPad: wider column, same layout */
+
+
+/* top */
+.hdr{display:flex;justify-content:space-between;align-items:center;padding:6px 0}
+.cbtn{width:44px;height:44px;border-radius:50%;border:0;background:var(--card);display:grid;place-items:center;color:var(--text)}
+.cbtn:active{filter:brightness(.95)}
+.cbtn svg{width:20px;height:20px}
+.ringwrap{display:grid;place-items:center;margin:6px 0 22px}
+.ring{width:104px;height:104px;position:relative}
+.ring svg.rg{width:104px;height:104px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-linecap:round}
+.ring .tr{stroke:var(--accent);stroke-width:3;opacity:.9}
+.ring.run .tr{stroke:var(--track);stroke-width:6;opacity:1}
+.ring .fg{stroke:var(--accent);stroke-width:6;transition:stroke-dashoffset .35s ease}
+.ring.done .tr{stroke:var(--ok);stroke-width:3;opacity:1}
+.ring .mid{position:absolute;inset:0;display:grid;place-items:center}
+.ring .mid .dv svg{height:50px;width:auto;display:block;overflow:visible}
+.ring.off .mid .dv{opacity:.35}
+.ring .mid b{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.02em}
+.ring .tick{width:40px;height:40px;stroke:var(--ok);stroke-width:5;fill:none;stroke-linecap:round;stroke-linejoin:round}
+h1.ttl{margin:0;font-size:28px;font-weight:700;letter-spacing:-.02em;line-height:1.15}
+.desc{margin:8px 0 0;font-size:21px;line-height:1.3;color:var(--sub);font-variant-numeric:tabular-nums}
+
+/* action cards */
+.cards{display:grid;gap:12px;margin-top:22px}
+.acard{display:flex;align-items:center;gap:14px;background:var(--card);border-radius:24px;padding:16px 16px 16px 18px;min-height:96px;cursor:pointer}
+.acard:active{filter:brightness(.97)}
+.acard .ai{width:34px;flex:none;display:grid;place-items:center;color:var(--accent-ink)}
+.acard .ai svg{width:28px;height:28px;stroke-width:1.7}
+.acard .at{flex:1;min-width:0}
+.acard .at b{display:block;font-size:17px;font-weight:650;line-height:1.25}
+.acard .at .ad{display:block;margin-top:2px;font-size:15px;color:var(--sub);line-height:1.35}
+.acard .at .al{border:0;background:none;padding:2px 0 0;font-size:15px;color:var(--accent-ink);text-decoration:none}
+.acard .go{width:40px;height:40px;border-radius:50%;border:0;flex:none;display:grid;place-items:center;background:linear-gradient(var(--accent-a),var(--accent-b));color:var(--accent-ink)}
+.acard .go svg{width:18px;height:18px;stroke-width:2.2;fill:none}
+.acard .go.fill svg{fill:currentColor;stroke:none}
+.acard.main .at b{font-size:18px}
+.acard.danger .ai,.acard.danger .at b{color:var(--bad)}
+.acard.danger .go{background:#f7dfe1;color:var(--bad)}
+.acard.dis{opacity:.5;pointer-events:none}
+.storage{margin-top:18px;background:var(--card);border-radius:24px;padding:16px 18px}
+.storage h3{margin:0 0 10px;font-size:13px;font-weight:600;color:var(--sub)}
+.bar{display:flex;height:14px;border-radius:7px;overflow:hidden;background:var(--track)}
+.bar i{display:block;height:100%}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;font-size:12.5px;color:var(--sub);font-variant-numeric:tabular-nums}
+.legend s{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;text-decoration:none}
+.sec-title{font-size:13px;font-weight:600;color:var(--sub);margin:24px 4px 8px}
+
+/* sheets */
+.scrim{position:fixed;inset:0;background:rgba(20,20,15,.34);display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.sheet{width:100%;max-width:430px;max-height:90%;overflow:auto;background:#fff;border-radius:26px 26px 0 0;
+  padding:8px max(18px,env(safe-area-inset-left,0px)) calc(26px + env(safe-area-inset-bottom,0px)) max(18px,env(safe-area-inset-right,0px));animation:up .22s ease-out}
+@keyframes up{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}
+.grab{width:38px;height:5px;border-radius:3px;background:#d4d4d9;margin:2px auto 10px}
+.sh-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 12px}
+.sh-h h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
+.sh-h button{border:0;background:none;color:var(--accent-ink);font-size:16px;font-weight:600;padding:6px 2px}
+.sheet p{margin:6px 0;color:var(--sub);font-size:15px}
+.sheet p.t{color:var(--text)}
+.field{display:block;width:100%;margin-top:10px;padding:13px 15px;border-radius:14px;border:0;background:var(--card);font:inherit;font-size:16px;color:var(--text)}
+.err{color:var(--bad);font-size:13.5px;min-height:18px;margin-top:6px}
+.link{border:0;background:none;color:var(--accent-ink);font-size:14px;padding:10px 0 0}
+.cta{display:block;width:100%;margin-top:14px;padding:15px 16px;border-radius:16px;border:0;background:linear-gradient(var(--accent-a),var(--accent-b));color:var(--accent-ink);font-size:17px;font-weight:650}
+.cta:active{filter:brightness(.96)}.cta:disabled{opacity:.6}
+.cta.ghost{background:var(--card);color:var(--text);font-weight:500}
+.card{background:var(--card);border-radius:18px;overflow:hidden}
+.li{display:flex;align-items:center;gap:12px;padding:13px 15px;border-top:1px solid var(--line)}
+.li:first-child{border-top:0}
+.li .l{flex:1;min-width:0}.li .l b{display:block;font-weight:600;font-size:15.5px}.li .l span{color:var(--sub);font-size:13.5px}
+.li .r{color:var(--sub);font-size:13.5px;text-align:right;font-variant-numeric:tabular-nums}
+.tag{display:inline-block;padding:1px 9px;border-radius:99px;font-size:12px;font-weight:600;margin-top:3px}
+.tag.ok{background:#e1f2e5;color:var(--ok)}.tag.mute{background:var(--track);color:var(--sub)}.tag.bad{background:#fbe3e5;color:var(--bad)}
+.steps .li{align-items:flex-start}
+.n{width:26px;height:26px;border-radius:50%;background:var(--track);color:var(--sub);display:grid;place-items:center;font-size:13px;font-weight:700;flex:none;margin-top:1px}
+.n.done{background:var(--ok);color:#fff}.n.cur{background:linear-gradient(var(--accent-a),var(--accent-b));color:var(--accent-ink)}
+.mono{font-family:var(--mono);font-size:12.5px;overflow-wrap:anywhere}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:13px 15px}
+.sw b{font-weight:600}
+.toggle{width:51px;height:31px;border-radius:16px;border:0;background:#d4d4d9;position:relative;flex:none;transition:background .2s}
+.toggle::after{content:"";position:absolute;top:2px;left:2px;width:27px;height:27px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .2s}
+.toggle[aria-checked="true"]{background:var(--accent)}
+.toggle[aria-checked="true"]::after{transform:translateX(20px)}
+.days{display:flex;gap:6px;flex-wrap:wrap}
+.days button{width:42px;height:42px;border-radius:50%;border:0;background:var(--card);font-size:15px}
+.days button[aria-pressed="true"]{background:linear-gradient(var(--accent-a),var(--accent-b));color:var(--accent-ink);font-weight:700}
+.lab{font-size:13px;color:var(--sub);margin:16px 0 6px}
+select.field{appearance:none}
+details.faq{background:var(--card);border-radius:18px;margin-top:12px}
+details.faq summary{cursor:pointer;padding:14px 15px;font-weight:600;font-size:15px;list-style:none;display:flex;justify-content:space-between;gap:10px}
+details.faq summary::-webkit-details-marker{display:none}
+details.faq summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--sub);border-bottom:2px solid var(--sub);transform:rotate(45deg);flex:none;margin:4px 4px 0 0;transition:transform .15s}
+details.faq[open] summary::after{transform:rotate(-135deg)}
+details.faq .fb{padding:0 15px 13px;font-size:14.5px;line-height:1.6}
+details.faq .fb p{margin:7px 0;color:var(--text)}
+pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-height:1.6;overflow-x:auto;background:var(--card);border-radius:18px;max-height:50vh}
+.dev-row{display:flex;align-items:center;gap:12px;width:100%;padding:13px 15px;border:0;border-top:1px solid var(--line);background:none;text-align:left}
+.dev-row:first-child{border-top:0}
+.dev-row .dv svg{height:34px;width:auto;display:block}
+.dev-row .l{flex:1}.dev-row .l b{display:block;font-size:15.5px}.dev-row .l span{font-size:13px;color:var(--sub)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--text);color:#fff;padding:10px 18px;border-radius:99px;font-size:14px;z-index:40;max-width:90%}
+
+.lockbar{position:absolute;top:calc(12px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px))}
+.langmenu{position:absolute;top:50px;right:0;background:#fff;border-radius:14px;box-shadow:0 8px 28px rgba(0,0,0,.18);padding:6px;min-width:160px;z-index:60}
+.langmenu button{display:flex;align-items:center;justify-content:space-between;gap:14px;width:100%;border:0;background:none;padding:11px 12px;border-radius:9px;font-size:16px;text-align:left}
+.langmenu button:active,.langmenu button:hover{background:var(--card)}
+.langmenu svg{width:18px;height:18px;color:var(--accent-ink)}
+.ring .mid .bg svg{width:44px;height:44px;color:var(--accent-ink);stroke-width:1.7}
+.ring.off .mid .bg{opacity:.4}
+/* lock screen */
+.lock{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;padding:20px;z-index:50}
+.lockbox{width:min(360px,100%)}
+.lockbox .brand code{font-family:var(--mono);font-size:15px;background:var(--card);border-radius:7px;padding:3px 10px}
+.lockbox .lead{margin:14px 0 4px;font-size:22px;font-weight:700;letter-spacing:-.015em}
+.lockbox details.fg{margin-top:16px;font-size:13px;color:var(--sub)}
+.lockbox details.fg summary{cursor:pointer;list-style:none}.lockbox details.fg summary::-webkit-details-marker{display:none}
+.lockbox details.fg p{font-size:13px}
+@media (prefers-reduced-motion:reduce){.sheet{animation:none}.ring .fg,.toggle,.toggle::after{transition:none}}
+.sugg{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--card);border-radius:14px;font-size:13.5px;margin-top:10px}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-hist" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/></symbol>
+  <symbol id="i-restore" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 1 2.5 5.8"/><path d="M4 18v-5h5"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"/></symbol>
+  <symbol id="i-backup" viewBox="0 0 24 24"><path d="M12 16V5"/><path d="M7.5 9.5 12 5l4.5 4.5"/><path d="M5 15v3a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3"/></symbol>
+  <symbol id="i-back" viewBox="0 0 24 24"><path d="M14.5 5.5 8 12l6.5 6.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.2v13.6a.6.6 0 0 0 .9.5l11-6.8a.6.6 0 0 0 0-1L8.9 4.7a.6.6 0 0 0-.9.5z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.5 7V4.5h5V7M6.5 7l1 12.5h9l1-12.5M10 11v5M14 11v5"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.3-5.4"/><path d="M19.5 4.5v4h-4"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+  <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></symbol>
+</svg>
+<main class="app" id="app">
+  <div class="hdr" id="hdr"></div>
+  <section id="top" aria-live="polite"></section>
+  <div class="cards" id="cards"></div>
+  <div id="extra"></div>
+</main>
+<div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="shT"></div></div>
+<div class="lock" id="lock" hidden><div class="lockbar" id="lockBar"></div><div class="lockbox" id="lockBox"></div></div>
+<script>
+(function(){
+  var $=function(s,r){return (r||document).querySelector(s)};
+  function h(tag,cls,txt){var e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+  function btn(cls,txt,fn){var b=h('button',cls,txt);b.type='button';if(fn)b.onclick=fn;return b}
+  var NS='http://www.w3.org/2000/svg';
+  function ico(id,cls){var s=document.createElementNS(NS,'svg');s.setAttribute('class',cls||'i');var u=document.createElementNS(NS,'use');u.setAttribute('href','#i-'+id);s.appendChild(u);return s}
+  function pad(n){return n<10?'0'+n:''+n}
+  function dur(s){if(s==null)return '—';var hh=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return hh?hh+':'+pad(m)+':'+pad(x):m+':'+pad(x)}
+  function fmtTime(ts){if(!ts)return '—';var d=new Date(ts*1000);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
+  function fmtSpeed(n){return n==null?'':(n>=1e6?(n/1e6).toFixed(1)+' MB/s':Math.round(n/1e3)+' KB/s')}
+  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return (i>=3?n.toFixed(1):Math.round(n))+' '+u[i]}
+
+  /* ---- 语言：默认跟随浏览器，选择后记住 ---- */
+  var LANG=(function(){try{var v=localStorage.getItem('ib_lang');if(v==='zh'||v==='en')return v}catch(e){}return /^zh/i.test(navigator.language||'')?'zh':'en'})();
+  function setLang(l){LANG=l;try{localStorage.setItem('ib_lang',l)}catch(e){}document.documentElement.lang=l==='en'?'en':'zh-CN'}
+  document.documentElement.lang=LANG==='en'?'en':'zh-CN';
+  try{var ql=new URLSearchParams(location.search).get('lang');if(ql==='zh'||ql==='en')setLang(ql)}catch(e){}   // ?lang=zh 或 ?lang=en 手动指定
+  function vol(x){return LANG==='en'&&x?x.replace(/^存储空间\s*(\d+)/,'Volume $1').replace('备份文件夹','Backup folder'):x}
+  function L(zh,en){return LANG==='en'?en:zh}
+  var ERR={'密码不对':'Wrong password','已经设置过密码':'A password is already set','请输入密码':'Enter a password','尝试次数太多，请一分钟后再试':'Too many attempts, try again in a minute',
+    '未检测到设备':'No device found','确认信息不匹配':'Confirmation does not match','还没有选择备份保存位置':'No backup location chosen yet','这台设备在备份位置里没有备份':'This device has no backup in the location','这个文件夹看起来不是备份，为了安全没有删除':'That folder does not look like a backup, so nothing was deleted','正在备份或删除，请稍后再试':'A backup or deletion is running, try again shortly','尚未配对':'Not paired yet','已有任务在运行':'Another task is running','请先选择这台设备的备份保存位置':'Choose a backup location for this device first',
+    '这个位置不可用':'This location is not available','文件夹名称不可用':'This folder name is not allowed','有任务在运行，稍后再更改':'A task is running, try again later',
+    '请至少选择一天':'Pick at least one day','时间格式不对':'Invalid time','请先连接手机，再设置定时备份':'Connect the device before setting a schedule','没有正在运行的备份':'No backup is running',
+    '配对需要 USB 连接':'Pairing needs a USB connection','开启 Wi-Fi 同步需要 USB 连接并已配对':'Turning on Wi-Fi sync needs a USB connection and a paired device','请先连接并配对设备':'Connect and pair the device first',
+    '手机没有确认，请检查手机屏幕后重试':'The device did not confirm. Check its screen and try again'};
+  var ERRP={'这个文件夹不能写入：':'This folder is not writable: ','无法读取这个文件夹：':'Cannot read this folder: ','无法新建：':'Cannot create it: '};
+  function tr(m){if(LANG!=='en'||!m)return m;if(ERR[m])return ERR[m];for(var k in ERRP){if(m.indexOf(k)===0)return ERRP[k]+m.slice(k.length)}return m}
+  function zhMsg(m){
+    if(!m)return '';
+    var t=[[/waiting for passcode/i,'请在手机上输入锁屏密码…','Enter the passcode on the device…'],[/receiving files/i,'正在接收文件。','Receiving files.'],[/sending files/i,'正在发送文件。','Sending files.'],
+      [/requesting backup/i,'正在向手机请求备份…','Requesting backup…'],[/will be encrypted/i,'备份将被加密。','The backup will be encrypted.'],[/incremental backup/i,'增量备份：只传变化的文件。','Incremental backup: only changes are sent.'],
+      [/full backup/i,'完整备份。','Full backup.'],[/preparing|starting/i,'正在准备…','Preparing…']];
+    for(var i=0;i<t.length;i++)if(t[i][0].test(m))return L(t[i][1],t[i][2]);
+    return m;
+  }
+
+  /* ---- 状态 ---- */
+  var S=null,authed=false,pollTimer=null,view='main',armUntil=0,pickAuto={},lastSig='',R={},FLASH=null;
+  if(location.hash==='#backup')view='backup';   // 可直接打开“立即备份”二级页
+  function api(path,body){
+    var opt=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+    return fetch(path,opt).then(function(r){
+      if(r.status===401){showLock('locked');throw new Error('unauthorized')}
+      return r.json();
+    });
+  }
+  function authPost(path,body){
+    return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
+      .then(function(r){return r.json().then(function(j){j._status=r.status;return j})});
+  }
+  function scn(){
+    if(!S)return 'loading';
+    var d=S.device;
+    if(S.job)return S.job.cancelling?'cancelling':'running';
+    if(!d.connected)return 'offline';
+    if(d.paired===false)return 'unpaired';
+    var r=S.result;
+    if(r&&r.kind==='backup'&&r.status==='ok'&&S.now-r.ts<90)return 'done';
+    return 'idle';
+  }
+
+  /* ---- 设备图标（按型号代码选，和电脑版同一套） ---- */
+  var FOLD_TYPES=['iPhone19,4'];
+  function iconKind(pt){
+    if(pt==='fold'||FOLD_TYPES.indexOf(pt)>=0)return 'fold';
+    var m=/^(iPhone|iPad)(\d+),(\d+)$/.exec(pt||'');
+    if(!m)return 'island';
+    var maj=+m[2],min=+m[3];
+    if(m[1]==='iPad')return (maj===8||maj>=13)?'ipad-full':'ipad-button';
+    if(maj<=9||(maj===10&&[1,2,4,5].indexOf(min)>=0)||pt==='iPhone12,8'||pt==='iPhone14,6')return 'button';
+    if(maj===10||maj===11||maj===12||maj===13||(maj===14&&[2,3,4,5,7,8].indexOf(min)>=0))return 'notch';
+    return 'island';
+  }
+  function iconSVG(k){
+    var B='fill="#fff" stroke="var(--text)" stroke-width="3"',SC='fill="var(--track)"',INK='fill="var(--text)"';
+    var o={
+      'island':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="14" '+B+'/><rect x="5" y="5" width="48" height="102" rx="10.5" '+SC+'/><rect x="20" y="9.5" width="18" height="5.5" rx="2.75" '+INK+'/></svg>',
+      'notch':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="14" '+B+'/><rect x="5" y="5" width="48" height="102" rx="10.5" '+SC+'/><path d="M17 5h24v2.5a4.5 4.5 0 0 1-4.5 4.5h-15A4.5 4.5 0 0 1 17 7.5z" '+INK+'/></svg>',
+      'button':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="10" '+B+'/><rect x="6" y="17" width="46" height="70" rx="1.5" '+SC+'/><rect x="22" y="8" width="14" height="3" rx="1.5" '+INK+'/><circle cx="29" cy="99" r="5.5" fill="none" stroke="var(--text)" stroke-width="2"/></svg>',
+      'ipad-button':'<svg viewBox="0 0 84 112" width="84" height="112"><rect x="1.5" y="1.5" width="81" height="109" rx="9" '+B+'/><rect x="7" y="13" width="70" height="78" rx="1.5" '+SC+'/><circle cx="42" cy="7" r="1.6" '+INK+'/><circle cx="42" cy="102" r="5" fill="none" stroke="var(--text)" stroke-width="2"/></svg>',
+      'ipad-full':'<svg viewBox="0 0 84 112" width="84" height="112"><rect x="1.5" y="1.5" width="81" height="109" rx="9" '+B+'/><rect x="6" y="6" width="72" height="100" rx="4.5" '+SC+'/><circle cx="42" cy="3.6" r="1.1" '+INK+'/></svg>',
+      'fold':'<svg viewBox="0 0 110 90" width="137" height="112"><rect x="1.5" y="1.5" width="107" height="87" rx="11" '+B+'/><rect x="5.5" y="5.5" width="48" height="79" rx="6" '+SC+'/><rect x="56.5" y="5.5" width="48" height="79" rx="6" '+SC+'/><path d="M55 5v80" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/><circle cx="97" cy="11.5" r="2" '+INK+'/></svg>'
+    };
+    return o[k]||o.island;
+  }
+
+  /* ---- 渲染 ---- */
+  function lastText(){
+    var la=S.last;
+    if(!la||!la.ts)return L('尚未备份','No backup yet');
+    var unfinished=la.state&&la.state!=='finished';
+    return L('上次备份 '+fmtTime(la.ts)+(unfinished?'（未完成）':'')+(la.encrypted?'，已加密':''),'Last backup '+fmtTime(la.ts)+(unfinished?' (incomplete)':'')+(la.encrypted?', encrypted':''));
+  }
+  function sig(){
+    var d=S.device;
+    return [LANG,view,scn(),d.connected,d.paired,d.conn,d.encrypted,d.ptype,d.name,S.config.configured,S.config.dir,S.schedule.enabled,S.schedule.time,S.schedule.nextStr,S.history.length,(S.health||[]).length,S.last&&S.last.ts,S.storage.dir,S.storage.free,Date.now()<armUntil,FLASH&&FLASH.t].join('|');
+  }
+  function render(){
+    if(!S)return;
+    var s=sig();
+    if(s===lastSig&&S.job){updateRun();return}
+    lastSig=s;
+    renderHdr();renderTop();renderCards();
+    updateRun();
+    maybeAutoPick();
+  }
+  function renderHdr(){
+    var hd=$('#hdr');hd.textContent='';
+    if(view==='backup'){var b1=btn('cbtn',null,function(){go('main')});b1.setAttribute('aria-label',L('返回','Back'));b1.appendChild(ico('back'));hd.appendChild(b1)}
+    else hd.appendChild(h('span'));
+    var b2=btn('cbtn',null,openMenu);b2.setAttribute('aria-label',L('更多','More'));b2.appendChild(ico('more'));hd.appendChild(b2);
+  }
+  function go(v){view=v;lastSig='';render();try{window.scrollTo(0,0)}catch(e){}}
+  function renderTop(){
+    var top=$('#top');top.textContent='';R={};
+    var c=scn(),d=S.device,sub=view==='backup',running=c==='running'||c==='cancelling';
+    var wrap=h('div','ringwrap'),ring=h('div','ring'+(running?' run':'')+(c==='done'?' done':'')+(c==='offline'?' off':''));
+    var C=2*Math.PI*49;R.C=C;var p0=S.job?S.job.pct:0;      // draw the ring at its real value at once: a redraw must not flash 0%
+    ring.innerHTML='<svg class="rg" viewBox="0 0 104 104"><circle class="tr" cx="52" cy="52" r="49"/>'+(running?'<circle class="fg" id="rfg" cx="52" cy="52" r="49" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+(C*(1-p0/100)).toFixed(1)+'" style="transition:none"/>':'')+'</svg>';
+    var mid=h('div','mid');
+    if(running){var pb=h('b',null,Math.floor(p0)+'%');pb.id='rpct';mid.appendChild(pb)}
+    else if(c==='done'){mid.innerHTML='<svg class="tick" viewBox="0 0 54 54"><path d="M13 28l10 10 19-22"/></svg>'}
+    else if(sub){var bg=h('div','bg');bg.appendChild(ico('backup'));mid.appendChild(bg)}
+    else{var dv=h('div','dv');dv.innerHTML=iconSVG(iconKind(d.ptype));mid.appendChild(dv)}
+    ring.appendChild(mid);wrap.appendChild(ring);top.appendChild(wrap);
+    var kindName=/^iPad/.test(d.ptype||'')?'iPad':'iPhone';
+    top.appendChild(h('h1','ttl',sub?L('立即备份','Back Up Now'):(d.connected?(d.name||kindName):kindName)));
+    var p=h('p','desc');top.appendChild(p);R.desc=p;
+    if(running)return;
+    var res=S.result,txt;
+    if(FLASH&&Date.now()<FLASH.until)txt=FLASH.t;
+    else if(c==='done')txt=L('备份完成。刚刚，'+(S.last&&S.last.encrypted?'已加密':'未加密')+'。','Backup complete. Just now, '+(S.last&&S.last.encrypted?'encrypted':'not encrypted')+'.');
+    else if(c==='offline')txt=L('未检测到设备。请确认手机和 NAS 在同一个 Wi-Fi，或用 USB 线连接。','Device not found. Make sure it is on the same Wi-Fi as the NAS, or connect a USB cable.');
+    else if(c==='unpaired')txt=L('尚未配对。用 USB 线连接手机，并在手机上点“信任”。','Not paired yet. Connect with a USB cable and tap Trust on the device.');
+    else if(!S.config.configured)txt=L('请先选择备份保存位置。','Choose where to save backups first.');
+    else if(res&&res.kind==='backup'&&S.now-res.ts<600&&res.status!=='ok')txt=res.status==='cancelled'?L('备份已取消，上一次备份保持不变。','Backup cancelled. The last backup is untouched.'):L('备份失败。','Backup failed.')+(res.error?' '+tr(res.error):'');
+    else if(sub)txt=L('把手机备份到 NAS。增量备份只传变化的文件。','Back up this device to your NAS. Incremental backups only send what changed.');
+    else txt=L('已连接，正在待命。'+lastText()+'。','Connected and ready. '+lastText()+'.');
+    p.textContent=txt;
+  }
+  function updateRun(){
+    var j=S&&S.job;if(!j||!R.desc)return;
+    if($('#rpct')){$('#rpct').textContent=Math.floor(j.pct)+'%';$('#rfg').style.strokeDashoffset=(R.C*(1-j.pct/100)).toFixed(1)}
+    var eta;
+    if(j.eta==null)eta=L('剩余时间计算中','estimating time left');
+    else{var m=Math.round(j.eta/60);if(m<2)eta=L('剩余不到 2 分钟','less than 2 min left');else{if(m>15)m=Math.round(m/5)*5;eta=m>=60?L('剩余约 '+Math.floor(m/60)+' 小时'+(m%60?' '+(m%60)+' 分钟':''),'about '+Math.floor(m/60)+' h'+(m%60?' '+(m%60)+' min':'')+' left'):L('剩余约 '+m+' 分钟','about '+m+' min left')}}
+    var phase=j.cancelling?L('正在取消…','Cancelling…'):(zhMsg(j.status||j.msg)||L('正在准备…','Preparing…'));
+    var wr=(j.bytes!=null?L('，已写入 '+fmtBytes(j.bytes),', '+fmtBytes(j.bytes)+' written'):'')+(j.speed!=null?', '+fmtSpeed(j.speed):'');
+    R.desc.textContent=L(phase+'　已用时 '+dur(j.elapsed)+wr+'，'+eta+'。',phase+'  '+dur(j.elapsed)+' elapsed'+wr+', '+eta+'.');
+  }
+
+  function card(o){
+    var c=h('div','acard'+(o.cls?' '+o.cls:'')+(o.dis?' dis':''));
+    var i=h('span','ai');i.appendChild(ico(o.icon));c.appendChild(i);
+    var t=h('div','at');t.appendChild(h('b',null,o.title));t.appendChild(h('span','ad',o.desc));
+    if(o.more){var l=btn('al',L('了解更多…','Learn more…'),function(e){e.stopPropagation();info(o.more)});t.appendChild(l)}
+    c.appendChild(t);
+    var g=h('button','go'+(o.fill?' fill':''));g.type='button';g.setAttribute('aria-label',o.title);g.appendChild(ico(o.go||'chev'));
+    g.onclick=function(e){e.stopPropagation();o.fn()};c.appendChild(g);
+    c.onclick=function(){o.fn()};
+    return c;
+  }
+  function renderCards(){
+    var Lc=$('#cards');Lc.textContent='';
+    var c=scn(),d=S.device,running=c==='running'||c==='cancelling',armed=Date.now()<armUntil,ready=(c==='idle'||c==='done')&&S.config.configured;
+    var enc=d.encrypted===true;
+    if(view==='backup'){
+      if(running)Lc.appendChild(card({cls:'main danger',icon:'stop',title:c==='cancelling'?L('正在取消…','Cancelling…'):(armed?L('再点一次确认取消','Tap again to confirm'):L('取消备份','Cancel Backup')),desc:L('取消后，上一次完好的备份保持不变。','The last good backup stays untouched.'),go:'stop',fill:true,dis:c==='cancelling',fn:cancelClick}));
+      else Lc.appendChild(card({cls:'main',icon:'backup',title:L('开始备份','Start Backup'),desc:c==='offline'||c==='unpaired'?L('先连接并配对手机。','Connect and pair the device first.'):(!S.config.configured?L('先选择备份位置。','Choose a backup location first.'):L('把手机备份到 NAS。','Back up this device to your NAS.')),go:'play',fill:true,dis:c==='offline'||c==='unpaired',fn:startBackup}));
+      Lc.appendChild(card({icon:'lock',title:L('加密备份','Encrypted Backup'),desc:enc?L('已开启。密码保存在手机里，以后每次备份自动使用。','On. The password lives on the device and is used for every backup.'):(d.encrypted===false?L('未开启。开启后备份会包含健康数据和已保存的密码。','Off. Turn on to include Health data and saved passwords.'):L('暂时读不到加密状态。','Encryption status is unavailable right now.')),more:'enc',dis:running||c==='offline'||c==='unpaired',fn:openEnc}));
+      Lc.appendChild(card({icon:'folder',title:L('备份位置','Backup Location'),desc:(S.config.dir||L('尚未选择','Not chosen yet'))+(S.storage.free!=null?L('，可用 ',', ')+fmtBytes(S.storage.free)+L('',' free'):''),more:'where',dis:running||!d.connected,fn:openFolder}));
+      var hasBk=(S.storage&&S.storage.dir>0)||(S.last&&S.last.ts);
+      Lc.appendChild(card({cls:'danger',icon:'trash',title:S.deleting?L('正在删除…','Deleting…'):L('删除备份','Delete Backup'),desc:S.deleting?L('文件很多时可能要一两分钟。','This can take a minute or two.'):L('删除 NAS 上这台设备的备份。','Remove this device’s backup from the NAS.'),dis:running||!!S.deleting||!hasBk||c==='offline'||c==='unpaired',fn:openDelete}));
+    }else{
+      var hl=S.health||[];
+      if(hl.length){var bad=hl.some(function(x){return x.level==='error'});
+        Lc.appendChild(card({cls:'main'+(bad?' danger':''),icon:'log',title:L('环境自检','Setup check'),desc:L(hl.length+' 项需要处理：'+hl[0].title.zh,hl.length+' item(s) need attention: '+hl[0].title.en),fn:openHealth}))}
+      if(c==='offline')Lc.appendChild(card({cls:'main',icon:'refresh',title:L('检测连接','Check Connection'),desc:L('重新查找手机，必要时自动重新连接。','Look for the device again and reconnect if needed.'),go:'refresh',fn:probe}));
+      if(c==='unpaired')Lc.appendChild(card({cls:'main',icon:'wifi',title:L('去配对','Pair Now'),desc:L('用 USB 线连接，在手机上点“信任”并输入锁屏密码。','Connect with USB, tap Trust on the device and enter its passcode.'),fn:openConn}));
+      Lc.appendChild(card({cls:'main',icon:'backup',title:L('立即备份','Back Up Now'),desc:running&&S.job?L('备份中 '+Math.floor(S.job.pct)+'%，点进去查看','Backing up '+Math.floor(S.job.pct)+'%, tap to view'):L('开始备份，并设置加密和备份位置。','Start a backup, and set encryption and location.'),more:'backup',go:running?'chev':'play',fill:!running,dis:c==='offline'||c==='unpaired',fn:function(){go('backup')}}));
+      var sc=S.schedule;
+      Lc.appendChild(card({icon:'clock',title:L('定时备份','Scheduled Backup'),desc:sc.enabled?L('每天 '+sc.time+(sc.nextStr?'，下一次 '+sc.nextStr:''),'Daily at '+sc.time+(sc.nextStr?', next '+sc.nextStr:'')):L('未开启。由 NAS 在设定时间主动连接手机。','Off. The NAS connects to the device at the set time.'),more:'sched',dis:!d.connected,fn:openSched}));
+      Lc.appendChild(card({icon:'wifi',title:L('连接与配对','Connection & Pairing'),desc:c==='offline'?L('未连接','Not connected'):(d.paired?(d.conn==='usb'?L('USB，已信任','USB, trusted'):L('无线，已信任','Wi-Fi, trusted')):L('未配对','Not paired')),more:'conn',fn:openConn}));
+      Lc.appendChild(card({icon:'log',title:L('运行日志','Logs'),desc:L('最近的运行记录，排查问题时用。','Recent activity, useful for troubleshooting.'),fn:openLog}));
+    }
+    var ex=$('#extra');ex.textContent='';
+    if(view==='main'&&S.storage.total){
+      var st=S.storage,dirp=Math.max(0.4,(st.dir||0)/st.total*100),oth=Math.max(0,(st.used||0)-(st.dir||0));
+      var box=h('div','storage');
+      box.innerHTML='<h3></h3><div class="bar" role="img"><i style="background:var(--accent)"></i><i style="background:#c9c9cf"></i></div><div class="legend"><span><s style="background:var(--accent)"></s><b></b></span><span><s style="background:#c9c9cf"></s><b></b></span><span><s style="background:var(--track)"></s><b></b></span></div>';
+      $('h3',box).textContent=L('NAS 存储 · ','NAS Storage · ')+vol(st.label||'');
+      var bs=box.querySelectorAll('.bar i');bs[0].style.width=dirp+'%';bs[1].style.width=(oth/st.total*100)+'%';
+      var lg=box.querySelectorAll('.legend b');lg[0].textContent=L('此设备备份 ','This device ')+fmtBytes(st.dir);lg[1].textContent=L('其他 ','Other ')+fmtBytes(oth);lg[2].textContent=L('可用 ',' ')+fmtBytes(st.free)+L('',' free');
+      $('.bar',box).setAttribute('aria-label',L('备份 ','Backups ')+fmtBytes(st.dir)+L('，可用 ',', ')+fmtBytes(st.free)+L('',' free'));
+      ex.appendChild(box);
+    }
+    if(view==='backup')ex.appendChild(histBlock());
+  }
+  function histBlock(){
+    var box=h('div');box.appendChild(h('div','sec-title',L('备份记录','Backup History')));
+    var c=h('div','card');
+    if(!S.history.length){var e=h('div','li'),l=h('div','l');l.appendChild(h('span',null,L('还没有备份记录。','No backups yet.')));e.appendChild(l);c.appendChild(e)}
+    S.history.slice(0,20).forEach(function(x){
+      var way=x.way==='usb'?'USB':L('无线','Wi-Fi'),src=x.source==='schedule'?L('定时','Scheduled'):L('手动','Manual');
+      var li=h('div','li'),l=h('div','l');l.appendChild(h('b',null,fmtTime(x.ts)));l.appendChild(h('span',null,way+' · '+src+' · '+dur(x.duration)));
+      var tg=h('span','tag '+(x.status==='ok'?'ok':(x.status==='cancelled'?'mute':'bad')),x.status==='ok'?L('成功','Success')+(x.encrypted===true?L(' · 已加密',' · Encrypted'):''):(x.status==='cancelled'?L('已取消','Cancelled'):L('失败','Failed')));
+      if(x.error)tg.title=tr(x.error);
+      l.appendChild(h('br'));l.appendChild(tg);li.appendChild(l);li.appendChild(h('div','r',x.size!=null?fmtBytes(x.size):'—'));c.appendChild(li)});
+    box.appendChild(c);return box;
+  }
+
+  /* ---- 动作 ---- */
+  function poll1(){return api('/api/status').then(function(j){S=j;render()}).catch(function(){})}
+  function poll(){
+    if(!authed)return;
+    api('/api/status').then(function(j){S=j;render()}).catch(function(){
+      if(!authed)return;
+      $('#top').textContent='';var p=h('p','desc',L('连接不上备份服务。请检查 NAS 上的 ios-backup-station 容器是否在运行。','Cannot reach the backup service. Check that the ios-backup-station container is running on the NAS.'));p.style.marginTop='60px';$('#top').appendChild(p);lastSig='';
+    }).then(function(){if(authed)pollTimer=setTimeout(poll,S&&S.job?1200:4000)});
+  }
+  function asked(){try{return localStorage.getItem('ib_asked')==='1'}catch(e){return false}}
+  function setAsked(){try{localStorage.setItem('ib_asked','1')}catch(e){}}
+  function startBackup(){
+    if(!S||S.job)return;
+    if(!S.config.configured){openFolder();return}
+    if(S.device.encrypted!==true&&!(S.last&&S.last.ts)&&!asked()){openFirst();return}
+    api('/api/backup',{}).then(function(j){if(j.error)toast(tr(j.error));return poll1()}).catch(function(){});
+  }
+  function cancelClick(){
+    if(!S||!S.job||S.job.cancelling)return;
+    if(Date.now()<armUntil){armUntil=0;api('/api/cancel',{}).then(function(j){if(j.error)toast(tr(j.error));return poll1()}).catch(function(){});return}
+    armUntil=Date.now()+4000;lastSig='';render();setTimeout(function(){lastSig='';render()},4100);
+  }
+  function probe(){
+    toast(L('检测中，必要时会自动重新连接，最多十几秒…','Checking, reconnecting if needed. This can take up to 15 seconds…'));
+    api('/api/probe',{}).then(function(j){
+      toast(j.net&&j.net.length?(j.restarted?L('已重新连接，通过无线找到手机','Reconnected and found over Wi-Fi'):L('已通过无线找到手机','Found over Wi-Fi')):(j.usb&&j.usb.length?L('只通过 USB 找到手机','Found over USB only'):L('没有找到手机','Device not found')));
+      return poll1();
+    }).catch(function(){});
+  }
+  function maybeAutoPick(){
+    var d=S.device;
+    if(d.connected&&d.udid&&!S.config.configured&&!pickAuto[d.udid]&&$('#scrim').hidden&&$('#lock').hidden){pickAuto[d.udid]=true;openFolder()}
+  }
+
+  /* ---- 底部弹层 ---- */
+  var lastFocus=null,sheetTimer=null;
+  function sheet(title,build){
+    lastFocus=document.activeElement;clearInterval(sheetTimer);
+    var sh=$('#sheet');sh.textContent='';sh.appendChild(h('div','grab'));
+    var hd=h('div','sh-h'),t=h('h2',null,title);t.id='shT';hd.appendChild(t);hd.appendChild(btn(null,L('完成','Done'),closeSheet));sh.appendChild(hd);
+    build(sh);$('#scrim').hidden=false;
+  }
+  function closeSheet(){clearInterval(sheetTimer);$('#scrim').hidden=true;if(lastFocus&&lastFocus.focus)try{lastFocus.focus()}catch(e){}}
+  $('#scrim').addEventListener('click',function(e){if(e.target===this)closeSheet()});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!$('#scrim').hidden)closeSheet()});
+  var tt=null;
+  function toast(m){var o=$('.toast');if(o)o.remove();var t=h('div','toast',m);t.setAttribute('role','status');document.body.appendChild(t);clearTimeout(tt);tt=setTimeout(function(){t.remove()},3200)}
+
+  var INFO={
+    backup:[['立即备份','Back Up Now'],['第一次是完整备份，数据多，请在家里用 USB 一次做完；之后每次只传变化的内容，通常几分钟。没有断点续传，中途断开后，下次备份时手机会重新对比并补传。加密和备份位置也在这里设置。','The first backup is a full one and can be large, so do it at home over USB in one go. After that only changes are sent, usually in a few minutes. There is no resume: if a backup is interrupted, the device compares again next time and sends what is needed. Encryption and the backup location are set here too.']],
+    enc:[['加密备份','Encrypted Backup'],['开启后，备份才会包含健康数据、已保存的密码和 Wi-Fi 密码。密码保存在手机里，不在 NAS 上，忘记密码就无法恢复备份，请记好。第一次开启或关闭后，手机会重新做一次完整备份，所以不要来回切换。','When on, the backup also includes Health data, saved passwords and Wi-Fi passwords. The password is kept on the device, not on the NAS. If you forget it you cannot restore the backup. Turning it on or off makes the device do a full backup again, so don’t switch back and forth.']],
+    sched:[['定时备份','Scheduled Backup'],['到了设定的时间，是 NAS 主动连接手机并备份，不是手机发起。手机要和 NAS 在同一个 Wi-Fi，并开着 Wi-Fi 同步，夜里最好充电。手机不在线时按设定的时间窗口每 10 分钟重试；手机锁屏等密码超过 5 分钟会自动放弃。','At the set time the NAS connects to the device and starts the backup; the device does not start it. The device must be on the same Wi-Fi with Wi-Fi sync on, ideally charging overnight. If it is offline the NAS retries every 10 minutes within the window; if the device waits for its passcode for more than 5 minutes the attempt is abandoned.']],
+    where:[['备份位置','Backup Location'],['只能选择 NAS 共享给备份服务的文件夹。每台设备可以各选一个，比如 iPhone 一个、iPad 一个。已有的备份不会自动搬到新位置。','Only folders the NAS shares with this service can be chosen. Each device gets its own, for example one for the iPhone and one for the iPad. Existing backups are not moved automatically.']],
+    conn:[['连接与配对','Connection & Pairing'],['第一次必须用 USB 线连接并在手机上点“信任”，配对记录保存在 NAS。之后开启手机的 Wi-Fi 同步，就可以通过 Wi-Fi 备份。如果 NAS 找不到手机，请到“连接与配对”里查看原因。','The first time you must connect with a USB cable and tap Trust on the device; the pairing record is stored on the NAS. After that, turn on Wi-Fi sync on the device to back up over Wi-Fi. If the NAS cannot find the device, see the tips in Connection & Pairing.']]
+  };
+  function info(k){var x=INFO[k];sheet(L(x[0][0],x[0][1]),function(sh){sh.appendChild(h('p','t',L(x[1][0],x[1][1])))})}
+
+  function openMenu(){
+    sheet(L('更多','More'),function(sh){
+      var c=h('div','card');
+      function row(t,sub,fn){var b=h(fn?'button':'div','dev-row');if(fn)b.type='button';var l=h('span','l');l.appendChild(h('b',null,t));if(sub)l.appendChild(h('span',null,sub));b.appendChild(l);if(fn)b.onclick=fn;return b}
+      c.appendChild(row(L('语言','Language'),LANG==='en'?'English':'简体中文',function(){setLang(LANG==='en'?'zh':'en');closeSheet();lastSig='';render()}));
+      c.appendChild(row(L('退出登录','Sign Out'),L('回到密码页','Back to the password screen'),function(){closeSheet();authPost('/api/auth/logout').then(function(){showLock('locked')})}));
+      c.appendChild(row(L('关于 ios-backup-station','About ios-backup-station'),L('开源项目，与苹果公司无关。iPhone、iPad、iTunes 是苹果公司的商标。','Open source, not affiliated with Apple. iPhone, iPad and iTunes are trademarks of Apple Inc.')));
+      sh.appendChild(c);
+    });
+  }
+  function openFirst(){
+    sheet(L('第一次备份','First Backup'),function(sh){
+      sh.appendChild(h('p','t',L('要加密这个备份吗？选好以后每次备份都会沿用，不会再问。','Encrypt this backup? Your choice is kept for every future backup.')));
+      sh.appendChild(h('p',null,L('加密后，备份才会包含健康数据、已保存的密码和 Wi-Fi 密码。','Only encrypted backups include Health data, saved passwords and Wi-Fi passwords.')));
+      sh.appendChild(btn('cta',L('加密…','Encrypt…'),function(){setAsked();openEnc(true)}));
+      sh.appendChild(btn('cta ghost',L('不加密','Don’t Encrypt'),function(){setAsked();closeSheet();startBackup()}));
+    });
+  }
+  function openEnc(thenBackup){
+    var on=S.device.encrypted===true;
+    sheet(on?L('关闭备份加密','Turn Off Encryption'):L('设置备份密码','Set a Backup Password'),function(sh){
+      sh.appendChild(h('p','t',on?L('输入当前的备份密码来关闭。关闭后新备份不再包含健康数据和已保存的密码。','Enter the current backup password to turn it off. New backups will no longer include Health data and saved passwords.'):L('密码保存在你的手机里。忘记密码就无法恢复备份，请记好。','The password is stored on your device. If you forget it you cannot restore the backup, so keep it safe.')));
+      function pw(ph,ac){var i=h('input','field');i.type='password';i.placeholder=ph;i.autocomplete=ac;i.setAttribute('aria-label',ph);sh.appendChild(i);return i}
+      var p1=pw(on?L('当前密码','Current password'):L('密码','Password'),on?'current-password':'new-password'),p2=on?null:pw(L('再输入一次','Confirm password'),'new-password');
+      var err=h('div','err');err.setAttribute('role','alert');sh.appendChild(err);
+      if(!on)sh.appendChild(h('p',null,L('这个密码只用于这一次设置，不会保存在 NAS 上。设置时手机可能会要你输入锁屏密码。','This password is used only for this setup and is not stored on the NAS. The device may ask for its passcode.')));
+      var go2=btn('cta',on?L('关闭加密','Turn Off'):L('开启加密','Turn On'),function(){
+        err.textContent='';err.style.color='';
+        if(!p1.value){err.textContent=L('请输入密码。','Enter a password.');return}
+        if(p2&&p1.value!==p2.value){err.textContent=L('两次输入的密码不一致。','The passwords don’t match.');return}
+        go2.disabled=true;err.style.color='var(--sub)';err.textContent=L('正在向手机设置，请留意手机屏幕，可能要输入锁屏密码…','Setting it on the device. Watch its screen, it may ask for the passcode…');
+        api('/api/encryption',{enable:!on,password:p1.value}).then(function(j){
+          if(j.ok){closeSheet();toast(on?L('已关闭备份加密','Encryption turned off'):L('已开启备份加密','Encryption turned on'));poll1().then(function(){if(thenBackup&&S&&!(S.last&&S.last.ts))startBackup()});return}
+          err.style.color='';err.textContent=tr(j.error)||L('设置失败，请重试。','Failed, please try again.');go2.disabled=false;
+        }).catch(function(){err.style.color='';err.textContent=L('连接不上备份服务。','Cannot reach the backup service.');go2.disabled=false});
+      });sh.appendChild(go2);p1.focus();
+    });
+  }
+  function openDelete(){
+    sheet(L('删除备份','Delete Backup'),function(sh){
+      var p=h('p','t');p.textContent=L('会把 NAS 上这台设备（'+(S.device.name||'')+'）的整个备份删除，并清空备份记录。无法撤销。','This removes the whole backup of this device ('+(S.device.name||'')+') from the NAS and clears its history. It cannot be undone.');sh.appendChild(p);
+      sh.appendChild(h('p',null,L('手机上的内容和备份密码不受影响。删除后，下一次备份会重新完整备份，用时较长。','Nothing on the device changes, and its backup password stays. The next backup will be a full one and takes much longer.')));
+      var i=h('input','field');i.type='text';i.autocomplete='off';i.placeholder=L('输入“删除”以确认','Type DELETE to confirm');i.setAttribute('aria-label',i.placeholder);sh.appendChild(i);
+      var err=h('div','err');err.setAttribute('role','alert');sh.appendChild(err);
+      var go2=btn('cta',L('删除备份','Delete Backup'),function(){
+        err.textContent='';
+        if(i.value.trim().toLowerCase()!==(LANG==='en'?'delete':'删除')){err.textContent=L('请输入“删除”两个字。','Type DELETE to confirm.');return}
+        go2.disabled=true;
+        api('/api/delete-backup',{confirm:S.device.udid}).then(function(j){
+          if(j.ok){closeSheet();toast(L('正在删除备份','Deleting the backup'));poll1();return}
+          err.textContent=tr(j.error)||L('删除失败。','Delete failed.');go2.disabled=false;
+        }).catch(function(){err.textContent=L('连接不上备份服务。','Cannot reach the backup service.');go2.disabled=false});
+      });go2.style.background='#f7dfe1';go2.style.color='var(--bad)';sh.appendChild(go2);i.focus();
+    });
+  }
+  function openSched(){
+    var sc=S.schedule,T={on:sc.enabled,time:sc.time,days:sc.days.slice(),retry:sc.retryHours};
+    sheet(L('定时备份','Scheduled Backup'),function(sh){
+      sh.appendChild(h('p',null,L('由 NAS 在设定的时间主动连接手机并备份，用的是 NAS 自己的时间和时区。','The NAS connects to the device and backs up at the set time, using the NAS’s own clock and time zone.')));
+      var c=h('div','card'),sw=h('div','sw');sw.appendChild(h('b',null,L('开启定时备份','Scheduled backup')));
+      var tg=h('button','toggle');tg.type='button';tg.setAttribute('role','switch');tg.setAttribute('aria-label',L('开启定时备份','Scheduled backup'));tg.setAttribute('aria-checked',String(T.on));
+      tg.onclick=function(){T.on=!T.on;tg.setAttribute('aria-checked',String(T.on))};sw.appendChild(tg);c.appendChild(sw);sh.appendChild(c);
+      sh.appendChild(h('div','lab',L('开始时间','Start time')));
+      var ti=h('input','field');ti.type='time';ti.value=T.time;ti.style.marginTop='0';ti.setAttribute('aria-label',L('开始时间','Start time'));ti.oninput=function(){T.time=ti.value||T.time};sh.appendChild(ti);
+      sh.appendChild(h('div','lab',L('重复','Repeat')));
+      var dv=h('div','days'),DN=LANG==='en'?['M','T','W','T','F','S','S']:['一','二','三','四','五','六','日'],DL=LANG==='en'?['Mon','Tue','Wed','Thu','Fri','Sat','Sun']:['周一','周二','周三','周四','周五','周六','周日'];
+      DN.forEach(function(n,i){var b=btn(null,n);b.setAttribute('aria-label',DL[i]);b.setAttribute('aria-pressed',String(T.days.indexOf(i)>=0));
+        b.onclick=function(){var k=T.days.indexOf(i);if(k>=0)T.days.splice(k,1);else T.days.push(i);b.setAttribute('aria-pressed',String(T.days.indexOf(i)>=0))};dv.appendChild(b)});
+      sh.appendChild(dv);
+      sh.appendChild(h('div','lab',L('手机不在线时','When the device is offline')));
+      var se=h('select','field');se.style.marginTop='0';se.setAttribute('aria-label',L('手机不在线时','When the device is offline'));
+      [['0',L('不重试','Don’t retry')],['1',L('每 10 分钟重试，最多 1 小时','Retry every 10 min, up to 1 hour')],['3',L('每 10 分钟重试，最多 3 小时','Retry every 10 min, up to 3 hours')],['6',L('每 10 分钟重试，最多 6 小时','Retry every 10 min, up to 6 hours')]].forEach(function(o){var op=h('option',null,o[1]);op.value=o[0];se.appendChild(op)});
+      se.value=String(T.retry);se.onchange=function(){T.retry=+se.value};sh.appendChild(se);
+      var nx=h('p','t');nx.style.marginTop='14px';nx.textContent=L('NAS 当前时间：','NAS time: ')+sc.serverTime+'（'+sc.tz+'）'+(sc.enabled&&sc.nextStr?L('。下一次备份：','. Next backup: ')+sc.nextStr:'');sh.appendChild(nx);
+      var qa=h('details','faq');qa.innerHTML='<summary></summary><div class="fb"></div>';$('summary',qa).textContent=L('怎么运作？','How does it work?');
+      var fb=$('.fb',qa);[[L('谁来发起：','Who starts it: '),L('是 NAS，不是手机。手机要和 NAS 在同一个 Wi-Fi 里，并开着 Wi-Fi 同步，夜里最好充电。','The NAS, not the device. The device must be on the same Wi-Fi with Wi-Fi sync on, ideally charging overnight.')],
+        [L('手机不在线：','Device offline: '),L('在设定的时间内每 10 分钟试一次，成功一次就停止。','The NAS tries every 10 minutes within the window and stops after one success.')],
+        [L('手机锁屏要密码：','Passcode prompt: '),L('等待超过 5 分钟自动放弃，稍后重试。','After waiting more than 5 minutes the attempt is abandoned and retried later.')],
+        [L('中途断了：','If interrupted: '),L('没有断点续传，已写入的文件还在，下次备份时手机重新对比并补传。第一次完整备份请在家用 USB 一次做完。','There is no resume. Files already written stay; next time the device compares again and sends what is needed. Do the first full backup at home over USB.')]].forEach(function(x){var p=h('p');p.appendChild(h('b',null,x[0]));p.appendChild(document.createTextNode(x[1]));fb.appendChild(p)});
+      sh.appendChild(qa);
+      var msg=h('div','err');msg.setAttribute('role','alert');sh.appendChild(msg);
+      var sv=btn('cta',L('保存','Save'),function(){
+        if(T.on&&!T.days.length){msg.textContent=L('请至少选择一天','Pick at least one day');return}
+        sv.disabled=true;msg.textContent='';
+        api('/api/schedule',{enabled:T.on,time:T.time,days:T.days.slice().sort(),retryHours:T.retry}).then(function(j){
+          sv.disabled=false;if(j.error){msg.textContent=tr(j.error);return}
+          closeSheet();poll1();toast(L('已保存','Saved'));
+        }).catch(function(){sv.disabled=false});
+      });sh.appendChild(sv);
+    });
+  }
+  function openFolder(){
+    var cur='',sug=null;
+    sheet(L('选择备份文件夹','Choose a Backup Folder'),function(sh){
+      var d=S.device,who=d.connected?(d.name||L('这台设备','this device')):L('这台设备','this device');
+      sh.appendChild(h('p',null,L('为“'+who+'”选择备份保存的位置。只显示 NAS 共享给备份服务的文件夹，每台设备可以各选一个。','Choose where to save backups for “'+who+'”. Only folders the NAS shares with this service are shown; each device gets its own.')));
+      var cr=h('p','t mono');sh.appendChild(cr);
+      var sg=h('div','sugg');sg.hidden=true;sh.appendChild(sg);
+      var cd=h('div','card');cd.style.marginTop='10px';sh.appendChild(cd);
+      var mk=h('div');mk.style.cssText='display:flex;gap:8px;margin-top:10px';var mi=h('input','field');mi.placeholder=L('新建文件夹的名称','New folder name');mi.style.margin='0';mi.setAttribute('aria-label',L('新建文件夹的名称','New folder name'));
+      var mb=btn('cta ghost',L('新建','New'));mb.style.cssText='width:auto;margin:0;padding:0 18px';mk.appendChild(mi);mk.appendChild(mb);sh.appendChild(mk);
+      var note=h('p',null,S.last&&S.last.ts?L('已有的备份不会自动搬到新位置。','Existing backups are not moved to the new location.'):'');sh.appendChild(note);
+      var err=h('div','err');err.setAttribute('role','alert');sh.appendChild(err);
+      var ok=btn('cta',L('选择此文件夹','Choose This Folder'),function(){choose(cur)});sh.appendChild(ok);
+      function item(txt,sub,fn){var b=h('button','dev-row');b.type='button';var i=h('span');i.appendChild(ico('folder'));i.style.color='var(--accent-ink)';b.appendChild(i);var l=h('span','l');l.appendChild(h('b',null,txt));if(sub)l.appendChild(h('span',null,sub));b.appendChild(l);b.onclick=fn;return b}
+      function choose(path){
+        if(!path)return;err.textContent='';
+        api('/api/config',{path:path}).then(function(j){
+          if(j.error){err.textContent=tr(j.error);return}
+          closeSheet();poll1();toast(L('备份位置已设置','Backup location set'));
+        }).catch(function(){err.textContent=L('连接不上备份服务。','Cannot reach the backup service.')});
+      }
+      function show(path){
+        err.textContent='';
+        api('/api/browse?path='+encodeURIComponent(path)).then(function(j){
+          if(j.error){err.textContent=tr(j.error);return}
+          cur=j.path;cd.textContent='';ok.disabled=!j.path;mk.hidden=!j.path;
+          cr.textContent=j.path?j.host+(j.volume?'　'+L('可用 ','')+fmtBytes(j.volume.free)+' / '+fmtBytes(j.volume.total)+L('',' free'):''):L('NAS 存储空间','NAS storage');
+          if(j.path)cd.appendChild(item(L('上一级','Up'),null,function(){show(j.parent)}));
+          (j.volumes||[]).forEach(function(v){cd.appendChild(item(vol(v.label)+'　'+v.host,L('可用 ','')+fmtBytes(v.free)+' / '+fmtBytes(v.total)+L('',' free'),function(){show(v.path)}))});
+          (j.dirs||[]).forEach(function(n){cd.appendChild(item(n,null,function(){show(j.path+'/'+n)}))});
+          if(j.path&&!(j.dirs||[]).length)cd.appendChild(h('p',null,L('这里没有子文件夹，可以直接选择，或新建一个。','No subfolders here. Choose this folder or create one.')));
+          sg.textContent='';sg.hidden=true;
+          if(!j.path&&j.suggest){sug=j.suggest;sg.hidden=false;
+            sg.appendChild(h('span',null,L('推荐：','Suggested: ')+j.suggest.host+L('（剩余空间最多的磁盘）',' (the disk with the most free space)')));
+            var ub=btn('btn-sm',L('使用推荐位置','Use This'),function(){
+              var p=sug.path,i=p.lastIndexOf('/');
+              api('/api/mkdir',{parent:p.slice(0,i),name:p.slice(i+1)}).then(function(m){if(m.error){err.textContent=tr(m.error);return}choose(m.path)}).catch(function(){});
+            });ub.style.cssText='border:0;border-radius:99px;padding:6px 14px;background:linear-gradient(var(--accent-a),var(--accent-b));color:var(--accent-ink);font-weight:600';sg.appendChild(ub);
+          }
+        }).catch(function(){err.textContent=L('连接不上备份服务。','Cannot reach the backup service.')});
+      }
+      function doMk(){var n=mi.value.trim();if(!n||!cur)return;api('/api/mkdir',{parent:cur,name:n}).then(function(j){if(j.error){err.textContent=tr(j.error);return}mi.value='';show(cur)}).catch(function(){})}
+      mb.onclick=doMk;mi.addEventListener('keydown',function(e){if(e.key==='Enter')doMk()});
+      show('');
+    });
+  }
+  function openConn(){
+    sheet(L('连接与配对','Connection & Pairing'),function(sh){
+      sh.appendChild(h('p',null,L('第一次必须用 USB 线。配对成功后才能走无线。','The first time needs a USB cable. Wireless works only after pairing.')));
+      var d=S.device,c=h('div','card steps');
+      function step(n,state,t,dd,btns){var li=h('div','li'),nn=h('span','n '+state,state==='done'?'✓':String(n));li.appendChild(nn);var l=h('div','l');l.appendChild(h('b',null,t));if(dd)l.appendChild(h('span',null,dd));
+        if(btns){var w=h('div');w.style.marginTop='8px';btns.forEach(function(b){w.appendChild(b)});l.appendChild(w)}li.appendChild(l);c.appendChild(li)}
+      function small(txt,fn){var b=btn('cta ghost',txt,fn);b.style.cssText+=';padding:8px 16px;font-size:14.5px;width:auto;margin:0;background:#fff';return b}
+      var off=!d.connected,out=h('div','err');out.style.color='var(--sub)';
+      step(1,off?'cur':'done',off?L('未检测到设备','Device not found'):(d.conn==='usb'?L('USB 已识别','USB detected'):L('已通过无线找到手机','Found over Wi-Fi')),off?L('用 USB 线把手机接到 NAS，并解锁手机','Connect the device to the NAS with a USB cable and unlock it'):L('设备 ','Device ')+d.udid);
+      var pb=small(L('配对','Pair'),function(){pb.disabled=true;out.textContent=L('请在手机上点“信任”并输入锁屏密码…','Tap Trust on the device and enter its passcode…');
+        api('/api/pair',{}).then(function(j){out.textContent=j.ok?L('配对成功','Paired'):(j.message||tr(j.error)||L('配对失败','Pairing failed'));pb.disabled=false;poll1()}).catch(function(){pb.disabled=false})});
+      step(2,d.paired?'done':(off?'':'cur'),d.paired?L('已信任此电脑','This computer is trusted'):L('信任此电脑','Trust this computer'),d.paired?L('配对记录保存在 NAS，重启后仍然有效','The pairing record is stored on the NAS and survives restarts'):L('点“配对”后，在手机上点“信任”并输入锁屏密码','Tap Pair, then tap Trust on the device and enter its passcode'),(d.paired===false&&d.conn==='usb')?[pb]:null);
+      var wb=small(L('开启 Wi-Fi 同步','Turn On Wi-Fi Sync'),function(){wb.disabled=true;out.textContent=L('正在设置…','Setting up…');
+        api('/api/wifi-sync',{enable:true}).then(function(j){out.textContent=j.ok?L('已开启','Turned on'):(j.message||tr(j.error)||L('设置失败','Failed'));wb.disabled=false;poll1()}).catch(function(){wb.disabled=false})});
+      step(3,d.wifiSync?'done':(d.paired?'cur':''),d.wifiSync?L('Wi-Fi 同步已开启','Wi-Fi sync is on'):L('开启 Wi-Fi 同步','Turn on Wi-Fi sync'),d.wifiSync?L('手机允许通过 Wi-Fi 被连接','The device accepts Wi-Fi connections'):(d.paired?L('需要在 USB 连接时开启一次','Turn it on once while connected over USB'):L('先完成配对','Pair first')),(d.paired&&d.conn==='usb'&&!d.wifiSync)?[wb]:null);
+      var seen=d.netIds&&d.netIds.length>0;
+      var pr=small(L('检测连接','Check Connection'),function(){pr.disabled=true;out.textContent=L('检测中，如果需要会自动重新连接，最多十几秒…','Checking, reconnecting if needed. Up to 15 seconds…');
+        api('/api/probe',{}).then(function(j){out.textContent=j.net.length?(j.restarted?L('已重新连接，通过无线找到手机','Reconnected and found over Wi-Fi'):L('已通过无线找到手机','Found over Wi-Fi')):(j.usb.length?L('只通过 USB 找到手机，没有无线信号','Found over USB only, no Wi-Fi signal'):L('没有找到手机','Device not found'));pr.disabled=false;poll1()}).catch(function(){pr.disabled=false})});
+      step(4,seen?'done':(d.wifiSync?'cur':''),seen?L('已通过无线找到手机','Found over Wi-Fi'):L('测试无线连接','Test the wireless connection'),seen?'':L('拔掉 USB 线，再点“检测连接”。','Unplug the USB cable, then tap Check Connection.'),[pr]);
+      sh.appendChild(c);sh.appendChild(out);
+      var qa=h('details','faq');qa.innerHTML='<summary></summary><div class="fb"></div>';$('summary',qa).textContent=L('为什么需要关闭“私有无线局域网地址”？','Why turn off “Private Wi-Fi Address”?');
+      var fb=$('.fb',qa);[[L('它是什么：','What it is: '),L('打开后，手机在每个 Wi-Fi 里都使用随机生成的网卡地址，而不是出厂的真实地址，目的是防止热点跨网络追踪同一台手机。','When on, the device uses a randomly generated network address on each Wi-Fi instead of its real hardware address, so hotspots cannot track it across networks.')],
+        [L('它不是让手机换 IP。','It does not change the IP. '),L('路由器根据 MAC 地址分配 IP，MAC 变了，IP 才可能跟着变。','The router assigns IPs by MAC address, so if the MAC changes the IP may change too.')],
+        [L('为什么要关：','Why turn it off: '),L('iOS 26.4 起，打开它时手机在局域网里的连接容易出问题，表现就是 NAS 一会儿找得到、一会儿找不到。只需要对家里这个 Wi-Fi 关闭。','Since iOS 26.4, leaving it on can break local-network connections, so the NAS finds the device one moment and loses it the next. Turn it off only for your home Wi-Fi.')],
+        [L('怎么关：','How: '),L('设置 → Wi-Fi → 点家里网络右边的 ⓘ → 关闭“私有无线局域网地址”。如果有 2.4G 和 5G 两个网络名，两个都要关。','Settings → Wi-Fi → tap ⓘ next to your home network → turn off Private Wi-Fi Address. If you have separate 2.4 GHz and 5 GHz names, do both.')]].forEach(function(x){var p=h('p');p.appendChild(h('b',null,x[0]));p.appendChild(document.createTextNode(x[1]));fb.appendChild(p)});
+      sh.appendChild(qa);
+    });
+  }
+  function openHealth(){
+    sheet(L('环境自检','Setup check'),function(sh){
+      sh.appendChild(h('p',null,L('下面这些会影响备份是否安全、能不能用。处理完后这里会自动消失。','These affect whether backups are safe and working. They disappear once fixed.')));
+      var c=h('div','card');
+      (S.health||[]).forEach(function(x){
+        var li=h('div','li'),l=h('div','l');l.appendChild(h('b',null,L(x.title.zh,x.title.en)));l.appendChild(h('span',null,L(x.fix.zh,x.fix.en)));
+        var tg=h('span','tag '+(x.level==='error'?'bad':'mute'),x.level==='error'?L('需要处理','Needs fixing'):L('建议处理','Recommended'));l.appendChild(h('br'));l.appendChild(tg);li.appendChild(l);c.appendChild(li)});
+      sh.appendChild(c);
+    });
+  }
+  function openLog(){
+    sheet(L('运行日志','Logs'),function(sh){
+      sh.appendChild(h('p',null,L('最近 200 行，每几秒自动刷新。','Last 200 lines, refreshed every few seconds.')));
+      var p=h('pre','log','…');sh.appendChild(p);
+      function load(){api('/api/log').then(function(j){var atEnd=p.scrollTop+p.clientHeight>=p.scrollHeight-8;p.textContent=j.lines.join('\n')||L('（还没有日志）','(no logs yet)');if(atEnd)p.scrollTop=p.scrollHeight}).catch(function(){})}
+      load();sheetTimer=setInterval(load,3000);
+    });
+  }
+
+  /* ---- 锁屏：设置密码要输两遍；右上角小图标切换语言 ---- */
+  var lockSt='locked',lockInfo=null,lockMenu=false;
+  function langBar(){
+    var bar=$('#lockBar');bar.textContent='';
+    var b=btn('cbtn',null,function(){lockMenu=!lockMenu;langBar()});b.setAttribute('aria-label',L('语言','Language'));b.setAttribute('aria-haspopup','menu');b.setAttribute('aria-expanded',String(lockMenu));b.appendChild(ico('globe'));bar.appendChild(b);
+    if(lockMenu){
+      var m=h('div','langmenu');m.setAttribute('role','menu');
+      [['zh','简体中文'],['en','English']].forEach(function(x){
+        var o=btn(null,x[1],function(){setLang(x[0]);lockMenu=false;lastSig='';showLock(lockSt,lockInfo)});o.setAttribute('role','menuitem');
+        if(LANG===x[0])o.appendChild(ico('check'));m.appendChild(o)});
+      bar.appendChild(m);
+    }
+  }
+  function showLock(st,info){
+    authed=false;clearTimeout(pollTimer);S=null;lastSig='';lockSt=st;lockInfo=info||null;
+    var Lk=$('#lock'),box=$('#lockBox');box.textContent='';Lk.hidden=false;langBar();
+    closeSheetQuiet();
+    var first=st==='unset';
+    var br=h('div','brand');br.appendChild(h('code',null,'ios-backup-station'));box.appendChild(br);
+    box.appendChild(h('p','lead',first?L('设置访问密码','Set a password'):L('输入密码','Enter password')));
+    function f(ph,type,ac){var i=h('input','field');i.type=type;i.placeholder=ph;i.autocomplete=ac;i.setAttribute('aria-label',ph);box.appendChild(i);return i}
+    var p1=f(L('密码','Password'),'password',first?'new-password':'current-password'),p2=null,hint=null;
+    if(first){p2=f(L('再输入一次','Confirm password'),'password','new-password');var tg=btn('link',L('添加提示词（可选）','Add a hint (optional)'));hint=f(L('输错两次后显示，不要直接写密码','Shown after two wrong attempts. Don’t write the password itself.'),'text','off');hint.maxLength=100;hint.hidden=true;tg.onclick=function(){hint.hidden=false;tg.hidden=true;hint.focus()};box.insertBefore(tg,hint)}
+    var err=h('div','err');err.setAttribute('role','alert');box.appendChild(err);
+    var hl=h('p','t');hl.hidden=true;box.appendChild(hl);
+    function showHint(x){if(x){hl.textContent=L('提示：','Hint: ')+x;hl.hidden=false}}
+    if(info&&info.hint)showHint(info.hint);
+    var go2=btn('cta',first?L('设置密码','Set Password'):L('进入','Unlock'),submit);box.appendChild(go2);
+    var fg=h('details','fg');fg.appendChild(h('summary',null,L('忘记密码？','Forgot password?')));fg.appendChild(h('p',null,L('在 NAS 上，把项目文件夹里的 config/auth.json 删除，再重启容器就能重新设置。','On the NAS, delete config/auth.json in the project folder and restart the container to set a new one.')));box.appendChild(fg);
+    function submit(){
+      err.textContent='';
+      if(first){
+        if(!p1.value){err.textContent=L('请输入密码。','Enter a password.');return}
+        if(p1.value!==p2.value){err.textContent=L('两次输入的密码不一致。','The passwords don’t match.');return}
+      }else if(!p1.value){err.textContent=L('请输入密码。','Enter your password.');p1.focus();return}
+      go2.disabled=true;
+      authPost(first?'/api/auth/setup':'/api/auth/login',first?{password:p1.value,hint:hint.value.trim()}:{password:p1.value}).then(function(j){
+        go2.disabled=false;
+        if(j.ok){enterApp();return}
+        err.textContent=tr(j.error)||L('失败，请重试。','Failed, please try again.');showHint(j.hint);p1.select();
+      }).catch(function(){go2.disabled=false;err.textContent=L('连接不上备份服务。','Cannot reach the backup service.')});
+    }
+    box.onkeydown=function(e){if(e.key==='Enter')submit()};
+    p1.focus();
+  }
+  function closeSheetQuiet(){clearInterval(sheetTimer);$('#scrim').hidden=true}
+  function enterApp(){authed=true;$('#lock').hidden=true;lockMenu=false;clearTimeout(pollTimer);lastSig='';poll()}
+  fetch('/api/auth').then(function(r){return r.json()}).then(function(j){
+    if(j.state==='ok')enterApp();else showLock(j.state,j);
+  }).catch(function(){$('#top').appendChild(h('p','desc',L('连接不上备份服务。','Cannot reach the backup service.')))});
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+# Local configuration and secrets: never commit these
+.env
+config/
+lockdown/
+
+# Python
+__pycache__/
+*.pyc
+
+# Editor and OS files
+.DS_Store
+*.swp
+.vscode/
+.idea/

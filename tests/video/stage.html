@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ios-backup-station demo stage</title>
+<style>
+/* A 1280x720 stage used only to record the demo video: cards, device frames and bilingual captions. */
+:root{--bg:#ecebe2;--ink:#1d1d1b;--sub:#6c6c66;--a1:#efeedc;--a2:#d8d7c2;--olive:#6b6833;--ring:#a19d5a;--card:#fff;
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Noto Sans CJK SC","Noto Sans SC","Segoe UI",Arial,sans-serif;--mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;width:1280px;height:720px;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font)}
+.layer{position:absolute;inset:0;opacity:0;transition:opacity .45s;pointer-events:none}
+.layer.on{opacity:1;pointer-events:auto}
+code.pill{font-family:var(--mono);background:#fff;border-radius:12px;padding:6px 18px;font-size:30px;box-shadow:0 2px 10px rgba(0,0,0,.06)}
+
+/* cards */
+.card-wrap{display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:20px;padding:0 120px}
+h1{font-size:54px;margin:6px 0 0;letter-spacing:-.02em;line-height:1.15}
+.en{color:var(--sub);font-size:26px;line-height:1.3}
+.zh{font-size:34px;font-weight:650;line-height:1.3}
+.row{display:flex;gap:26px;align-items:stretch;justify-content:center;margin-top:10px}
+.item{background:#fff;border-radius:24px;padding:26px 28px;width:340px;box-shadow:0 4px 18px rgba(0,0,0,.06);opacity:0;transform:translateY(16px);transition:all .5s;text-align:left}
+.item.on{opacity:1;transform:none}
+.item .zh{font-size:26px}.item .en{font-size:18px;margin-top:8px}
+.ico{width:46px;height:46px;border-radius:50%;background:linear-gradient(var(--a1),var(--a2));display:grid;place-items:center;margin-bottom:14px;color:var(--olive);font-weight:700;font-size:22px}
+.flow{display:flex;align-items:center;gap:14px;margin-top:20px}
+.box{background:#fff;border-radius:22px;padding:22px 26px;min-width:210px;box-shadow:0 4px 18px rgba(0,0,0,.06);opacity:0;transform:scale(.94);transition:all .5s}
+.box.on{opacity:1;transform:none}.box b{display:block;font-size:24px}.box span{color:var(--sub);font-size:16px}
+.arrow{font-size:30px;color:var(--ring);opacity:0;transition:opacity .5s}.arrow.on{opacity:1}
+.term{width:960px;background:#1c1c1a;color:#e7e6dc;border-radius:18px;padding:0 0 24px;box-shadow:0 12px 40px rgba(0,0,0,.25);text-align:left;font-family:var(--mono);font-size:21px;line-height:1.55}
+.term .bar{height:38px;background:#2a2a27;border-radius:18px 18px 0 0;display:flex;align-items:center;gap:8px;padding-left:16px;margin-bottom:16px}
+.term .bar i{width:12px;height:12px;border-radius:50%;background:#555}
+.term pre{margin:0;padding:0 26px;white-space:pre-wrap;min-height:330px}
+.term .p{color:#a19d5a}.term .ok{color:#8fcf8f}.term .err{color:#f0a0a0}.term .dim{color:#9a998f}
+
+/* device frames */
+.dev-wrap{position:absolute;inset:0}
+#desk{position:absolute;left:80px;top:34px;width:1120px;height:560px;border-radius:18px;overflow:hidden;background:#fff;box-shadow:0 14px 44px rgba(0,0,0,.2)}
+#desk iframe{width:1120px;height:560px;border:0;display:block}
+.phone{position:absolute;left:110px;top:34px;width:338px;height:650px;border:10px solid #1d1d1b;border-radius:48px;overflow:hidden;background:#fff;box-shadow:0 14px 44px rgba(0,0,0,.25)}
+.phone iframe{width:390px;height:790px;border:0;transform:scale(.8154);transform-origin:0 0;display:block}
+.ipad{position:absolute;left:90px;top:40px;width:480px;height:640px;border:14px solid #1d1d1b;border-radius:30px;overflow:hidden;background:#fff;box-shadow:0 14px 44px rgba(0,0,0,.25)}
+.ipad iframe{width:820px;height:1092px;border:0;transform:scale(.5854);transform-origin:0 0;display:block}
+.shot{position:absolute;left:90px;top:30px;width:1100px;height:570px;border-radius:18px;overflow:hidden;box-shadow:0 14px 44px rgba(0,0,0,.2);background:#fff}
+.shot img{width:1100px;display:block;margin-top:-4px}
+
+/* captions */
+#cap{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;pointer-events:none;transition:opacity .35s}
+#cap .box2{background:rgba(255,255,255,.96);border-radius:22px;padding:14px 34px;max-width:1120px;text-align:center;box-shadow:0 8px 28px rgba(0,0,0,.14);margin-bottom:22px}
+#cap .zh{font-size:30px}#cap .en{font-size:20px;margin-top:2px}
+body.side #cap{left:540px;right:60px;top:0;bottom:0;align-items:center}
+body.side #cap .box2{text-align:left;padding:30px 36px;margin:0}
+body.side #cap .zh{font-size:36px}body.side #cap .en{font-size:24px;margin-top:10px}
+#brand{position:absolute;left:28px;top:12px;font-family:var(--mono);font-size:15px;color:var(--sub);opacity:.85;z-index:5}
+</style>
+</head>
+<body>
+<div id="brand">ios-backup-station</div>
+
+<div class="layer card-wrap" id="title">
+  <code class="pill">ios-backup-station</code>
+  <h1>把 iPhone 和 iPad 备份到<br>你自己的 NAS</h1>
+  <div class="en">Back up your iPhone and iPad to your own NAS</div>
+  <div class="en" style="font-size:20px;margin-top:10px">USB · Wi-Fi · 加密 encrypted · 定时 scheduled · 开源 open source</div>
+</div>
+
+<div class="layer card-wrap" id="why">
+  <div class="zh" style="font-size:40px">为什么要自己做？ <span class="en" style="font-size:26px">Why?</span></div>
+  <div class="row">
+    <div class="item" id="w1"><div class="ico">☁</div><div class="zh">iCloud 备份只能存到苹果的服务器，容量另外收费</div><div class="en">iCloud backups go only to Apple's servers, and storage costs extra</div></div>
+    <div class="item" id="w2"><div class="ico">⌨</div><div class="zh">iTunes 无线同步要一台电脑一直开着</div><div class="en">iTunes wireless sync needs a computer left switched on</div></div>
+    <div class="item" id="w3"><div class="ico">▣</div><div class="zh">NAS 空间大、一直在线，让它自己去备份</div><div class="en">Your NAS has the space and never sleeps. Let it do the backup</div></div>
+  </div>
+</div>
+
+<div class="layer card-wrap" id="how">
+  <div class="flow">
+    <div class="box" id="h1"><b>iPhone / iPad</b><span>iOS 备份协议 · same protocol as iTunes</span></div>
+    <div class="arrow" id="a1">⇄<div style="font-size:15px;color:var(--sub)">USB / Wi-Fi</div></div>
+    <div class="box" id="h2"><b>NAS</b><span>一个 Docker 容器 · one Docker container</span></div>
+    <div class="arrow" id="a2">⇄<div style="font-size:15px;color:var(--sub)">HTTP</div></div>
+    <div class="box" id="h3"><b>浏览器</b><span>电脑 · 手机 · iPad · web page</span></div>
+  </div>
+</div>
+
+<div class="layer card-wrap" id="install">
+  <div class="term"><div class="bar"><i></i><i></i><i></i></div><pre id="termtext"></pre></div>
+</div>
+
+<div class="layer dev-wrap" id="desktop"><div id="desk"><iframe id="deskf" title="desktop interface"></iframe></div></div>
+<div class="layer dev-wrap" id="phonescene"><div class="phone"><iframe id="phonef" title="phone interface"></iframe></div></div>
+<div class="layer dev-wrap" id="ipadscene"><div class="ipad"><iframe id="ipadf" title="iPad interface"></iframe></div></div>
+<div class="layer dev-wrap" id="shotscene"><div class="shot"><img id="shotimg" alt=""></div></div>
+
+<div class="layer card-wrap" id="end">
+  <code class="pill">ios-backup-station</code>
+  <div class="row" style="margin-top:6px">
+    <div class="item on"><div class="ico">✓</div><div class="zh">MIT 开源，不联网，没有统计</div><div class="en">MIT licensed. No internet access needed, no telemetry</div></div>
+    <div class="item on"><div class="ico">!</div><div class="zh">已验证和没验证的，README 里都写清楚</div><div class="en">What is verified and what is not is spelled out in the README</div></div>
+    <div class="item on"><div class="ico">↗</div><div class="zh">与苹果公司无关</div><div class="en">Not affiliated with Apple</div></div>
+  </div>
+  <div class="en" style="font-size:24px;margin-top:8px">github.com/<b>JerryGHT04</b>/ios-backup-station</div>
+</div>
+
+<div id="cap"><div class="box2" id="capbox" style="opacity:0"><div class="zh" id="capzh"></div><div class="en" id="capen"></div></div></div>
+
+<script>
+const q = new URLSearchParams(location.search);
+window.show = (name) => { document.querySelectorAll('.layer').forEach(l => l.classList.toggle('on', l.id === name)); };
+window.layout = (side) => document.body.classList.toggle('side', !!side);
+window.say = (zh, en) => {
+  const b = document.getElementById('capbox');
+  if (!zh) { b.style.opacity = 0; return; }
+  b.style.opacity = 0;
+  setTimeout(() => { document.getElementById('capzh').textContent = zh; document.getElementById('capen').textContent = en || ''; b.style.opacity = 1; }, 180);
+};
+window.reveal = (id) => document.getElementById(id).classList.add('on');
+window.hideAll = (ids) => ids.forEach(i => document.getElementById(i).classList.remove('on'));
+window.setFrame = (id, url) => { document.getElementById(id).src = url; };
+window.setShot = (url) => { document.getElementById('shotimg').src = url; };
+window.typeTerm = (html, ms) => new Promise(res => {   // html is trusted text from make_video.py
+  const el = document.getElementById('termtext'); el.innerHTML = '';
+  const parts = html.split(/(<[^>]+>)/); let i = 0, out = '';
+  const tick = () => {
+    if (i >= parts.length) return res();
+    const p = parts[i++]; if (p.startsWith('<')) { out += p; el.innerHTML = out; return tick(); }
+    let j = 0; const t = setInterval(() => { out += p[j++]; el.innerHTML = out; if (j >= p.length) { clearInterval(t); tick(); } }, ms);
+  }; tick();
+});
+window.termAppend = (html) => { document.getElementById('termtext').insertAdjacentHTML('beforeend', html); };
+</script>
+</body>
+</html>

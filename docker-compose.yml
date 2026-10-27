@@ -1,0 +1,31 @@
+name: ios-backup-station
+
+services:
+  ios-backup-station:
+    # Prebuilt image once published (set IBS_IMAGE in .env); otherwise it is built from this folder.
+    image: ${IBS_IMAGE:-ios-backup-station:latest}
+    build:
+      context: .
+      args:
+        APT_MIRROR: ${APT_MIRROR:-}
+    container_name: ios-backup-station
+    # Host network: the phone is found on your LAN, and the host's avahi is reused for that.
+    network_mode: host
+    # privileged + /dev/bus/usb: needed to talk to the phone over USB (pairing and USB backups).
+    privileged: true
+    restart: unless-stopped
+    environment:
+      - PORT=${PORT:-8899}
+      # What the web UI shows as the backup folder (the container sees it at /nas/backups).
+      - NAS_ROOTS=backups=${BACKUP_LOCATION}
+    volumes:
+      - /etc/localtime:/etc/localtime:ro        # schedules run on the NAS's own time zone
+      - /dev/bus/usb:/dev/bus/usb
+      - /run/dbus:/run/dbus                      # avahi is reached through the host's system D-Bus
+      - /run/avahi-daemon:/run/avahi-daemon
+      - ${CONFIG_LOCATION:-./config}:/config                  # settings and the web password: keep this
+      - ${LOCKDOWN_LOCATION:-./lockdown}:/var/lib/lockdown    # pairing records: keep this
+      # The one thing you must set, in .env:  BACKUP_LOCATION=/full/path/of/a/NAS/folder
+      # To let the web UI choose between several folders, add more lines like "- /another/folder:/nas/another"
+      # and list them in NAS_ROOTS (name=host path, comma separated).
+      - "${BACKUP_LOCATION:?请先在 .env 里设置 BACKUP_LOCATION，填备份要保存到的 NAS 文件夹的完整路径（例如 BACKUP_LOCATION=/vol1/ios-backups）。 Set BACKUP_LOCATION in .env first: the full path of the NAS folder where backups are stored (for example BACKUP_LOCATION=/volume1/ios-backups). Or just run ./install.sh}:/nas/backups"

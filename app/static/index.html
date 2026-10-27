@@ -1,0 +1,984 @@
+<title>ios-backup-station</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b6833' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='7' y='2.5' width='10' height='19' rx='2.5'/%3E%3Cpath d='M11 5.5h2'/%3E%3C/svg%3E">
+<meta name="claude:viewport-fit-sides" content="cover">
+<script>
+/* 自动选界面。手机在 Safari 里点“请求桌面网站”后，浏览器标识会变成 Mac，服务器就给电脑版，这里要尊重它。
+   iPad 默认也自称 Mac，所以按“触屏 + 屏幕够大”判断：平板用手机版的布局，触屏手机（请求了桌面版）留在电脑版。
+   手机屏幕短边不到 600 像素（不受“请求桌面网站”影响），iPad 都在 744 以上。?ui=mobile 或 ?ui=desktop 可临时指定，不会被记住。 */
+(function(){try{
+  try{localStorage.removeItem('ib_ui')}catch(e){}
+  var q=new URLSearchParams(location.search).get('ui');
+  if(q==='desktop')return;
+  var touch=(navigator.maxTouchPoints||0)>1&&matchMedia('(pointer:coarse)').matches;
+  var tablet=touch&&Math.min(screen.width,screen.height)>=600;
+  if(q==='mobile'||tablet)location.replace('/m');
+}catch(e){}})();
+</script>
+<style>
+/* Layout: iTunes 12 device window. Top "LCD" status strip, left source list, right Summary pane with grouped sections. */
+:root{
+  --bg:#ececee; --pane:#f6f6f8; --card:#ffffff; --line:#d9d9de; --line2:#e8e8ec;
+  --text:#1d1d1f; --sub:#6e6e73; --accent:#0a84ff; --accent-ink:#ffffff; --sel:#d8dbe3;
+  --ok:#2fb344; --warn:#e8a200; --lcd1:#e9e9d8; --lcd2:#d3d3c0; --lcdtext:#33332b;
+  --bar:#dcdce1; --shadow:0 1px 2px rgba(0,0,0,.08);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","PingFang SC","Segoe UI","Helvetica Neue",Arial,sans-serif;
+}
+:root{color-scheme:light}
+
+*{box-sizing:border-box}
+[hidden]{display:none!important}   /* 本页不经过发布外壳，需要自己保证 hidden 属性有效 */
+body{background:var(--bg);color:var(--text);font-family:var(--font);font-size:14px;line-height:1.45;
+  padding-block:20px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.note{max-width:1040px;margin:0 auto 12px;color:var(--sub);font-size:12px}
+.win{max-width:1040px;margin:0 auto;background:var(--pane);border:1px solid var(--line);border-radius:12px;overflow:hidden;box-shadow:0 8px 30px rgba(0,0,0,.12)}
+
+/* top bar */
+.top{display:flex;align-items:center;gap:16px;padding:10px 16px;background:linear-gradient(var(--card),var(--pane));border-bottom:1px solid var(--line);flex-wrap:wrap}
+.lcd{flex:1 1 320px;min-width:0;text-align:center;padding:6px 14px;border-radius:6px;border:1px solid var(--line);
+  background:linear-gradient(var(--lcd1),var(--lcd2));color:var(--lcdtext);box-shadow:inset 0 1px 3px rgba(0,0,0,.15)}
+.lcd b{display:block;font-weight:600;font-size:13px}
+.lcd span{font-size:11px;opacity:.8;font-variant-numeric:tabular-nums}
+.lcd .track{height:4px;border-radius:2px;background:rgba(0,0,0,.15);margin-top:5px;overflow:hidden}
+.lcd .track i{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.lcd{position:relative}
+.lcd .dot{position:absolute;left:14px;top:50%;transform:translateY(-50%)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--ok)}
+
+.body{display:grid;grid-template-columns:200px 1fr;min-height:560px}
+@media(max-width:720px){.body{grid-template-columns:1fr}.side{display:flex;overflow-x:auto;border-right:0!important;border-bottom:1px solid var(--line);padding:8px!important}.side h4{display:none}.side button{white-space:nowrap}}
+
+.side{background:var(--bg);border-right:1px solid var(--line);padding:14px 10px}
+.side h4{margin:12px 8px 4px;font-size:11px;letter-spacing:.06em;color:var(--sub);text-transform:uppercase;font-weight:600}
+.side button{display:flex;align-items:center;gap:8px;width:100%;text-align:left;border:0;background:none;color:var(--text);
+  font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer}
+.side button[aria-selected="true"]{background:var(--sel);font-weight:600}
+.side button:hover{background:var(--sel)}
+.side svg{width:16px;height:16px;flex:none;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.main{padding:22px 26px 30px;min-width:0}
+.hero{display:flex;gap:20px;align-items:center;flex-wrap:wrap;margin-bottom:22px}
+.phone{width:58px;height:112px;border-radius:14px;border:3px solid var(--text);background:linear-gradient(160deg,var(--card),var(--bar));position:relative;flex:none}
+.phone::after{content:"";position:absolute;left:50%;top:7px;width:18px;height:5px;border-radius:3px;background:var(--text);transform:translateX(-50%)}
+.hero h1{margin:0;font-size:24px;font-weight:600}
+.titlerow{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.devsw{position:relative}
+.devsw>.b{border-radius:999px;padding:3px 12px;font-size:12px}
+.devmenu{position:absolute;left:0;top:calc(100% + 6px);z-index:20;min-width:260px;background:var(--card);border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);padding:6px}
+.devmenu button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;background:none;padding:8px 10px;border-radius:8px;font:inherit;color:var(--text);cursor:pointer}
+.devmenu button:hover:not(:disabled){background:var(--bar)}
+.devmenu button:disabled{opacity:.55;cursor:default}
+.devmenu .dn{flex:1;min-width:0}.devmenu .dn b{display:block;font-weight:600;font-size:14px}.devmenu .dn small{color:var(--sub);font-size:12px}
+.devmenu .ck{width:16px;color:var(--sub)}
+.hero p{margin:2px 0 0;color:var(--sub);font-size:13px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:2px 14px;margin-top:8px;font-size:13px}
+.kv dt{color:var(--sub)}.kv dd{margin:0;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+
+.sec{margin-bottom:22px}
+.sec>h3{margin:0 0 8px;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--sub);font-weight:600}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:0}
+@media(max-width:720px){.cols{grid-template-columns:1fr}.cols>*+*{border-left:0!important;border-top:1px solid var(--line2)}}
+.cols>div{padding:16px 18px}
+.cols>div+div{border-left:1px solid var(--line2)}
+.cols h5{margin:0 0 8px;font-size:13px;font-weight:600}
+.chk{display:flex;gap:8px;align-items:flex-start;margin:7px 0;font-size:13px}
+.chk input{margin-top:3px;accent-color:var(--accent)}
+.chk small{display:block;color:var(--sub);font-size:12px}
+.btns{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button.b{font:inherit;font-size:13px;padding:5px 16px;border-radius:6px;border:1px solid var(--line);background:linear-gradient(var(--card),var(--pane));color:var(--text);cursor:pointer}
+button.b:hover{filter:brightness(.97)}
+button.b.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+button.b:disabled{opacity:.5;cursor:default}
+.prog{padding:14px 18px;border-top:1px solid var(--line2)}
+.prog[hidden]{display:none}
+.prog .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.prog .row b{font-size:13px}
+.prog .pct{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
+.pbar{height:10px;border-radius:5px;background:var(--bar);overflow:hidden;border:1px solid var(--line)}
+.pbar i{display:block;height:100%;width:0;border-radius:5px;background:var(--accent);transition:width .25s}
+.pstat{display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums;align-items:center}
+.pstat .b{margin-left:auto;padding:3px 12px;font-size:12px}
+.last{padding:12px 18px;border-top:1px solid var(--line2);color:var(--sub);font-size:12.5px;display:flex;gap:18px;flex-wrap:wrap}
+.last b{color:var(--text);font-weight:600}
+
+/* capacity bar */
+.cap{padding:16px 18px}
+.capbar{display:flex;height:18px;border-radius:5px;overflow:hidden;background:var(--bar);border:1px solid var(--line)}
+.capbar i{display:block;height:100%}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--sub)}
+.legend s{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:6px;text-decoration:none}
+.legend span{font-variant-numeric:tabular-nums}
+
+/* tables */
+.tbl{width:100%;border-collapse:collapse;font-size:13px}
+.tbl th{font-weight:500;color:var(--sub);text-align:left;padding:8px 14px;border-bottom:1px solid var(--line);font-size:12px}
+.tbl td{padding:9px 14px;border-bottom:1px solid var(--line2);font-variant-numeric:tabular-nums;vertical-align:middle}
+.tbl tr:last-child td{border-bottom:0}
+.tblwrap{overflow-x:auto}
+.pill{display:inline-block;padding:1px 9px;border-radius:99px;font-size:11.5px;font-weight:600}
+.pill.ok{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+.pill.warn{background:color-mix(in srgb,var(--warn) 22%,transparent);color:var(--warn)}
+.pill.mute{background:var(--bar);color:var(--sub)}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
+.hint{padding:12px 18px;color:var(--sub);font-size:12.5px}
+.step{display:flex;gap:12px;padding:12px 18px;border-top:1px solid var(--line2)}
+.step:first-child{border-top:0}
+.step .n{width:22px;height:22px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:12px;font-weight:600;background:var(--bar);color:var(--sub)}
+.step.done .n{background:var(--ok);color:#fff}
+.step.cur .n{background:var(--accent);color:#fff}
+.step div b{display:block;font-size:13px}.step div span{color:var(--sub);font-size:12.5px}
+#healthCard{border-color:#e5b94d;background:#fffaf0;padding:14px 18px;margin-bottom:18px}
+#healthCard b.t{display:block;margin-bottom:6px}
+#healthCard ul{margin:0;padding-left:18px;font-size:13px;line-height:1.6}
+#healthCard li{margin:6px 0}
+#healthCard li span{color:var(--sub)}
+pre.log{margin:0;padding:14px 18px;font-size:12px;line-height:1.6;overflow-x:auto;max-height:340px;color:var(--text)}
+.pane[hidden]{display:none}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.38);display:grid;place-items:center;padding:16px;z-index:10}
+.ov[hidden]{display:none}
+.dlgbox{width:min(400px,100%);background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:12px;padding:20px 22px 18px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+.dlgbox h2{margin:0 0 6px;font-size:16px;font-weight:600}
+.dlgbox p{margin:6px 0;font-size:13px;color:var(--sub)}
+.dlgbox p.warn{color:var(--text)}
+.dlgbox label{display:block;font-size:12px;color:var(--sub);margin:12px 0 4px}
+.dlgbox input[type=password]{width:100%;font:inherit;font-size:14px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text)}
+.dlgbox .err{color:#e5484d;font-size:12px;min-height:18px;margin-top:6px}
+.dbtn{display:flex;gap:8px;justify-content:flex-end;margin-top:14px;flex-wrap:wrap}
+</style>
+<style>
+.ok-text{color:var(--ok)}
+.lcd{position:relative}
+.xbtn{flex:none;width:20px;height:20px;border-radius:50%;border:1px solid var(--line);background:var(--card);color:var(--sub);font:inherit;font-size:11px;line-height:1;padding:0;cursor:pointer;display:grid;place-items:center}
+.xbtn:hover{background:#e5484d;border-color:#e5484d;color:#fff}
+.xbtn:disabled{opacity:.5;cursor:default}
+.xbtn.armed{width:auto;padding:0 10px;border-radius:99px;background:#e5484d;border-color:#e5484d;color:#fff;font-size:12px;height:22px}
+.lcd .lx{position:absolute;right:8px;top:50%;transform:translateY(-50%)}
+.lcd .lx[hidden]{display:none}
+.pwrap{display:flex;align-items:center;gap:10px}
+.lock{position:fixed;inset:0;background:var(--bg);display:grid;place-items:center;padding:16px;z-index:50}
+.lock[hidden]{display:none}
+.lockbox{width:min(380px,100%);background:var(--card);border:1px solid var(--line);border-radius:14px;padding:26px 26px 22px;box-shadow:0 12px 40px rgba(0,0,0,.14)}
+.lockbox h2{margin:0 0 6px;font-size:18px;font-weight:600}
+.lockbox p{margin:6px 0;font-size:13px;color:var(--sub)}
+.lockbox label{display:block;font-size:12px;color:var(--sub);margin:14px 0 4px}
+.lockbox input{width:100%;font:inherit;font-size:15px;padding:8px 11px;border-radius:7px;border:1px solid var(--line);background:var(--pane);color:var(--text)}
+.lockbox .err{color:#e5484d;font-size:12.5px;min-height:18px;margin-top:8px}
+.lockbox .hintline{font-size:13px;color:var(--text);background:color-mix(in srgb,var(--warn) 16%,transparent);border-radius:8px;padding:8px 11px;margin-top:8px}
+.lockbox .go{width:100%;margin-top:14px;padding:8px 16px;font-size:14px}
+.lockbox .brand{margin:0 0 2px}
+.lockbox .brand code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:15px;background:var(--bar);color:var(--text);border-radius:6px;padding:3px 10px}
+.lockbox .lead{margin:12px 0 4px;font-size:13.5px;color:var(--sub)}
+.lockbox input{display:block;margin-top:10px}
+.lockbox .linkbtn{border:0;background:none;color:var(--accent);font:inherit;font-size:12.5px;padding:10px 0 0;cursor:pointer}
+.lockbox .b.pri{background:linear-gradient(var(--lcd1),var(--lcd2));border-color:#b5b59c;color:var(--lcdtext);font-weight:600}
+.lockbox .b.pri:disabled{opacity:.6}
+.lockbox .linkbtn{color:var(--lcdtext);text-decoration:underline;text-underline-offset:3px;opacity:.85}
+.lockbox input:focus-visible,.lockbox button:focus-visible,.lockbox summary:focus-visible{outline:2px solid #b5b59c;outline-offset:2px}
+.lockbox details.forgot{margin-top:14px;font-size:12px;color:var(--sub)}
+.lockbox details.forgot summary{cursor:pointer;list-style:none}
+.lockbox details.forgot summary::-webkit-details-marker{display:none}
+.lockbox details.forgot p{margin:6px 0 0;font-size:12px;line-height:1.5}
+.seg{display:inline-flex;background:var(--bar);padding:2px;border-radius:8px;gap:2px;margin-bottom:12px}
+.seg button{border:0;background:none;color:var(--sub);font:inherit;font-size:13px;padding:4px 16px;border-radius:6px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--card);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+details.faq{background:var(--card);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
+details.faq summary{cursor:pointer;padding:12px 18px;font-size:13.5px;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px;align-items:center}
+details.faq summary::-webkit-details-marker{display:none}
+details.faq summary::after{content:"";width:8px;height:8px;border-right:2px solid var(--sub);border-bottom:2px solid var(--sub);transform:rotate(45deg);transition:transform .15s;flex:none;margin-right:4px}
+details.faq[open] summary::after{transform:rotate(-135deg)}
+details.faq .fb{padding:0 18px 14px;font-size:13px;color:var(--text);line-height:1.6}
+details.faq .fb p{margin:8px 0}
+.qa{padding:12px 18px;border-top:1px solid var(--line2);font-size:13px}
+.qa:first-child{border-top:0}
+.qa b{display:block;margin-bottom:3px}
+.qa span{color:var(--sub);line-height:1.6}
+.days{display:flex;flex-wrap:wrap;gap:4px 0;margin-top:6px}
+.fld{display:block;font-size:13px;margin:10px 0 0}
+.fld span{display:block;color:var(--sub);font-size:12px;margin-bottom:3px}
+.fld input,.fld select{font:inherit;font-size:14px;padding:5px 9px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text)}
+.devicon{flex:none;line-height:0}
+.devicon svg{height:112px;width:auto;display:block;overflow:visible}
+.destrow{display:flex;align-items:flex-start;gap:8px}
+.destrow .chk{flex:1;min-width:0}
+.iconbtn{width:26px;height:26px;margin-top:5px;border-radius:6px;border:1px solid var(--line);background:linear-gradient(var(--card),var(--pane));display:grid;place-items:center;cursor:pointer;flex:none;padding:0}
+.iconbtn svg{width:15px;height:15px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.iconbtn:hover{filter:brightness(.95)}
+.iconbtn:disabled{opacity:.5;cursor:default}
+.dlgbox.wide{width:min(540px,100%)}
+.crumb{font-size:12px;color:var(--sub);word-break:break-all;min-height:18px}
+.flist{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:8px;background:var(--pane);margin:8px 0}
+.fitem{display:flex;gap:10px;align-items:center;width:100%;text-align:left;padding:8px 12px;border:0;border-bottom:1px solid var(--line2);background:none;color:var(--text);font:inherit;font-size:13px;cursor:pointer}
+.fitem:last-child{border-bottom:0}
+.fitem:hover{background:var(--sel)}
+.fitem svg{width:16px;height:16px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.fitem small{display:block;color:var(--sub);font-size:11.5px}
+.fempty{padding:14px 12px;color:var(--sub);font-size:12.5px}
+.mkrow{display:flex;gap:8px;margin-top:8px}
+.mkrow input{flex:1;min-width:0;font:inherit;font-size:13px;padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:var(--pane);color:var(--text)}
+.sugg{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:color-mix(in srgb,var(--accent) 10%,transparent);border-radius:8px;font-size:12.5px;margin-top:8px}
+.help{color:var(--sub);font-size:12px;margin-top:8px}
+.btn-sm{padding:3px 12px!important;font-size:12px!important}
+.pill.bad{background:color-mix(in srgb,#e5484d 18%,transparent);color:#e5484d}
+</style>
+
+<div class="win">
+  <div class="top">
+    <div class="lcd" aria-live="polite">
+      <span class="dot" id="dot"></span>
+      <b id="lcdT">正在读取状态…</b>
+      <span id="lcdS">&nbsp;</span>
+      <div class="track"><i id="lcdBar"></i></div>
+      <button class="xbtn lx" id="lcdX" type="button" aria-label="取消备份" title="取消备份" hidden>✕</button>
+    </div>
+    <button class="b btn-sm" id="logoutBtn" type="button" hidden>退出</button>
+  </div>
+
+  <div class="body">
+    <nav class="side" role="tablist" aria-label="分区">
+      <h4>设备</h4>
+      <button role="tab" aria-selected="true" data-p="sum"><svg viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 5.5h2"/></svg>摘要</button>
+      <button role="tab" aria-selected="false" data-p="bak"><svg viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/><path d="M12 8v4l3 2"/></svg>备份记录</button>
+      <button role="tab" aria-selected="false" data-p="sch"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>定时备份</button>
+      <h4>设置</h4>
+      <button role="tab" aria-selected="false" data-p="con"><svg viewBox="0 0 24 24"><path d="M5 12.5a10 10 0 0 1 14 0"/><path d="M8.5 16a5 5 0 0 1 7 0"/><circle cx="12" cy="19" r="1"/></svg>连接与配对</button>
+      <button role="tab" aria-selected="false" data-p="log"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5z"/><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"/></svg>运行日志</button>
+    </nav>
+
+    <main class="main">
+      <!-- 摘要 -->
+      <section class="pane" id="p-sum">
+        <div class="card" id="healthCard" hidden><b class="t" id="hcT"></b><ul id="hcL"></ul></div>
+        <div class="hero">
+          <div class="devicon" id="devIcon" aria-hidden="true"></div>
+          <div>
+            <div class="titlerow">
+              <h1 id="hTitle">iPhone</h1>
+              <div class="devsw" id="devSw" hidden>
+                <button class="b" id="devSwBtn" type="button" aria-haspopup="menu" aria-expanded="false" title="切换设备">切换设备 <span aria-hidden="true">⌄</span></button>
+                <div class="devmenu" id="devMenu" role="menu" hidden></div>
+              </div>
+            </div>
+            <p id="hVer">&nbsp;</p>
+            <dl class="kv">
+              <dt>UDID</dt><dd class="mono" id="kvUdid">—</dd>
+              <dt>连接方式</dt><dd id="kvConn">—</dd>
+              <dt>容量</dt><dd id="kvCap">—</dd>
+            </dl>
+          </div>
+        </div>
+
+        <div class="sec">
+          <h3>备份</h3>
+          <div class="card">
+            <div class="cols">
+              <div>
+                <h5>备份位置</h5>
+                <label class="chk"><input type="radio" name="dest" disabled> iCloud<small>不使用</small></label>
+                <div class="destrow"><label class="chk"><input type="radio" name="dest" checked disabled> 这台 NAS<small class="mono" id="destPath">—</small></label><button class="iconbtn" id="pickBtn" type="button" aria-label="选择备份文件夹" title="选择备份文件夹"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button></div>
+              </div>
+              <div>
+                <h5>手动备份与恢复</h5>
+                <label class="chk"><input type="checkbox" id="encChk"> 加密本地备份<small id="encSmall">正在读取…</small></label>
+                <div class="btns">
+                  <button class="b pri" id="goBackup" type="button">立即备份</button>
+                  <button class="b" id="goCancel" type="button" hidden>取消备份</button>
+                  <button class="b" id="goRestore" type="button">恢复备份…</button>
+                  <button class="b" id="goDelete" type="button">删除备份…</button>
+                </div>
+              </div>
+            </div>
+            <div class="prog" id="prog" hidden>
+              <div class="row"><b id="pPhase">正在准备…</b><span class="pct" id="pPct">0%</span></div>
+              <div class="pwrap"><div class="pbar" style="flex:1"><i id="pBar"></i></div><button class="xbtn" id="pX" type="button" aria-label="取消备份" title="取消备份">✕</button></div>
+              <div class="help mono" id="pFile" style="min-height:16px;margin:6px 0 0"></div>
+              <div class="pstat">
+                <span id="pElapsed">已用时 0:00</span><span id="pEta">剩余时间计算中</span>
+              </div>
+            </div>
+            <div class="last"><span>最新备份：<b id="lbTime">尚未备份</b></span><span>备份总大小：<b id="lbSize">—</b></span><span>已加密：<b id="lbEnc">—</b></span></div>
+          </div>
+        </div>
+
+        <div class="sec">
+          <h3 id="stTitle">NAS 存储</h3>
+          <div class="card cap">
+            <div class="capbar" role="img" id="capImg" aria-label="存储占用">
+              <i id="capDir" style="width:0;background:var(--accent)"></i>
+              <i id="capOth" style="width:0;background:#8e8e93;opacity:.55"></i>
+            </div>
+            <div class="legend">
+              <span><s style="background:var(--accent)"></s><span id="lgDir">iPhone 备份 —</span></span>
+              <span><s style="background:#8e8e93;opacity:.55"></s><span id="lgOth">其他文件 —</span></span>
+              <span><s style="background:var(--bar);border:1px solid var(--line)"></s><span id="lgFree">可用 —</span></span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 备份记录 -->
+      <section class="pane" id="p-bak" hidden>
+        <div class="hero"><div><h1>备份记录</h1><p>备份文件夹以手机 UDID 命名，可直接拷到 Windows 的 MobileSync\Backup 里恢复。</p></div></div>
+        <div class="card tblwrap">
+          <table class="tbl">
+            <thead><tr><th>时间</th><th>方式</th><th>备份总大小</th><th>耗时</th><th>状态</th></tr></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+        <div class="sec" style="margin-top:22px">
+          <h3>恢复备份</h3>
+          <div class="seg" role="group" aria-label="电脑系统"><button type="button" id="osWin" aria-pressed="true">Windows</button><button type="button" id="osMac" aria-pressed="false">macOS</button></div>
+          <div class="card" id="cardWin">
+            <div class="step"><span class="n">1</span><div><b>把备份文件夹拷到 Windows</b><span>从 NAS 上拷出这个文件夹：<span class="mono pathNas">—</span></span></div></div>
+            <div class="step"><span class="n">2</span><div><b>放进 iTunes 的备份目录</b><span class="mono" id="pathWin">—</span><span>文件夹名保持为手机的 UDID，不要改名。</span></div></div>
+            <div class="step"><span class="n">3</span><div><b>在 iTunes 里点“恢复备份”</b><span>用线连接 iPhone，点左上角的手机图标，在“摘要”里点“恢复备份”，选这个备份。备份加密了就输入你设置的备份密码。</span></div></div>
+            <div class="hint"><button class="b" type="button" id="copyNas">复制 NAS 文件夹路径</button> <button class="b" type="button" id="copyWin">复制 Windows 目标路径</button> <span class="copyOut" style="margin-left:10px"></span></div>
+          </div>
+          <div class="card" id="cardMac" hidden>
+            <div class="step"><span class="n">1</span><div><b>把备份文件夹拷到 Mac</b><span>在 Finder 里连接 NAS（前往 → 连接服务器），从 NAS 上拷出这个文件夹：<span class="mono pathNas">—</span></span></div></div>
+            <div class="step"><span class="n">2</span><div><b>放进 Finder 的备份目录</b><span class="mono" id="pathMac">—</span><span>在 Finder 里按 ⇧⌘G（前往文件夹），粘贴 <span class="mono">~/Library/Application Support/MobileSync/Backup/</span>，把备份文件夹拖进去。文件夹名保持为手机的 UDID，不要改名。</span></div></div>
+            <div class="step"><span class="n">3</span><div><b>在 Finder 里点“恢复备份…”</b><span>用线连接 iPhone，在 Finder 左侧点这台 iPhone，在“通用”里点“恢复备份…”，选这个备份。备份加密了就输入你设置的备份密码。</span></div></div>
+            <div class="step"><span class="n">4</span><div><b>macOS Mojave 或更早的系统</b><span>没有 Finder 的手机管理功能，请用 iTunes，步骤和 Windows 一样，备份目录是同一个。</span></div></div>
+            <div class="hint"><button class="b" type="button" id="copyNas2">复制 NAS 文件夹路径</button> <button class="b" type="button" id="copyMac">复制 Mac 目标路径</button> <span class="copyOut" style="margin-left:10px"></span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 定时备份 -->
+      <section class="pane" id="p-sch" hidden>
+        <div class="hero"><div><h1>定时备份</h1><p>由 NAS 在设定的时间主动连接手机并备份，用的是 NAS 自己的时间和时区。</p></div></div>
+        <div class="card">
+          <div class="cols">
+            <div>
+              <label class="chk"><input type="checkbox" id="schOn"> 开启定时备份<small>到点后 NAS 会连接手机，手机在线才能备份。</small></label>
+              <label class="fld"><span>开始时间</span><input type="time" id="schTime" value="20:00"></label>
+              <div class="fld"><span>重复</span><div class="days" id="schDays"></div></div>
+            </div>
+            <div>
+              <label class="fld" style="margin-top:0"><span>手机不在线时</span>
+                <select id="schRetry"><option value="0">不重试</option><option value="1">每 10 分钟重试，最多 1 小时</option><option value="3">每 10 分钟重试，最多 3 小时</option><option value="6">每 10 分钟重试，最多 6 小时</option></select></label>
+              <p class="help" id="schNext" style="font-size:13px;margin-top:14px">—</p>
+              <p class="help" id="schNow">—</p>
+            </div>
+          </div>
+          <div class="last"><button class="b pri" id="schSave" type="button">保存</button><span id="schMsg"></span><span id="schWarn"></span></div>
+        </div>
+        <div class="sec" style="margin-top:22px">
+          <h3>说明</h3>
+          <div class="card">
+            <div class="qa"><b>谁来发起备份？</b><span>是 NAS，不是手机。iPhone 不会主动把数据发给 NAS，到了设定的时间，NAS 上的服务去连手机并开始备份。所以手机要和 NAS 在同一个 Wi-Fi 里，并开着 Wi-Fi 同步。iOS 休眠时可能不应答，夜里最好让手机充电。</span></div>
+            <div class="qa"><b>手机不在线怎么办？</b><span>在“手机不在线时”设定的时间内，每 10 分钟试一次，成功一次就停止。时间用完还没备份成功，这一天就放弃，等下一个设定日。</span></div>
+            <div class="qa"><b>手机锁屏要输入锁屏密码怎么办？</b><span>定时备份没有人在旁边输入密码。手机等待锁屏密码超过 5 分钟，这次备份会自动放弃，10 分钟后再试。</span></div>
+            <div class="qa"><b>备份中途断了，能接着传吗？</b><span>不能断点续传。中途断开（手机离开 Wi-Fi、被拔线、你出门）后，已经写入 NAS 的文件还在，记录里会标为“未完成”，下一次备份时手机会重新对比，补传需要的部分。第一次完整备份数据量大，请在家里用 USB 一次做完，以后每次的增量备份通常很快。</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 连接与配对 -->
+      <section class="pane" id="p-con" hidden>
+        <div class="hero"><div><h1>连接与配对</h1><p>第一次必须用 USB 线。配对成功后才能走无线。</p></div></div>
+        <div class="card">
+          <div class="step" id="s1"><span class="n">1</span><div><b id="s1t">USB 连接</b><span id="s1d"></span></div></div>
+          <div class="step" id="s2"><span class="n">2</span><div><b id="s2t">信任此电脑</b><span id="s2d"></span><div class="help"><button class="b btn-sm" type="button" id="pairBtn" hidden>配对</button> <span id="pairOut"></span></div></div></div>
+          <div class="step" id="s3"><span class="n">3</span><div><b id="s3t">开启 Wi-Fi 同步</b><span id="s3d"></span><div class="help"><button class="b btn-sm" type="button" id="wifiBtn" hidden>开启 Wi-Fi 同步</button> <span id="wifiOut"></span></div></div></div>
+          <div class="step" id="s4"><span class="n">4</span><div><b id="s4t">测试无线连接</b><span id="s4d">拔掉 USB 线，再点“检测”。</span></div></div>
+          <div class="hint"><button class="b" type="button" id="probe">检测连接</button> <span id="probeOut" style="margin-left:10px"></span></div>
+        </div>
+        <div class="sec" style="margin-top:22px">
+          <h3>如果无线连不上</h3>
+          <details class="faq">
+            <summary>为什么需要关闭“私有无线局域网地址”？</summary>
+            <div class="fb">
+              <p><b>它是什么：</b>打开后，手机在每个 Wi-Fi 里都使用一个随机生成的网卡地址（MAC 地址），而不是出厂的真实地址。目的是防止商场、咖啡店这些热点跨网络追踪同一台手机。</p>
+              <p><b>它不是让手机换 IP。</b>路由器根据 MAC 地址分配 IP，MAC 变了，IP 才可能跟着变。</p>
+              <p><b>为什么要关：</b>iOS 26.4 起，打开它时手机在局域网里的连接容易出问题，表现就是 NAS 一会儿找得到、一会儿找不到。关闭后手机在你家使用固定的真实地址，局域网里更稳定。只需要对<b>家里这个 Wi-Fi</b>关闭，其他网络不受影响。</p>
+              <p><b>怎么关：</b>手机“设置 → Wi-Fi → 点家里网络右边的 ⓘ → 关闭私有无线局域网地址”，手机会重新连一次 Wi-Fi。如果家里有 2.4G 和 5G 两个网络名，两个都要关。</p>
+            </div>
+          </details>
+        </div>
+      </section>
+
+      <!-- 日志 -->
+      <section class="pane" id="p-log" hidden>
+        <div class="hero"><div><h1>运行日志</h1><p>最近 200 行，每几秒自动刷新。</p></div></div>
+        <div class="card"><pre class="log" id="logBox">…</pre></div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="lock" id="lock" hidden><div class="lockbox" id="lockBox"></div></div>
+
+<div class="ov" id="dlg" hidden><div class="dlgbox" id="dBox" role="dialog" aria-modal="true" aria-labelledby="dTitle"></div></div>
+
+<script>
+(function(){
+  var $=function(s){return document.querySelector(s)};
+  var S=null, flash=null, armUntil=0, pickAuto={};
+
+  function api(path,body){
+    var opt=body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)};
+    return fetch(path,opt).then(function(r){
+      if(r.status===401){showLock('locked');throw new Error('unauthorized')}
+      return r.json();
+    });
+  }
+  function pad(n){return n<10?'0'+n:''+n}
+  function fmtTime(ts){if(!ts)return '—';var d=new Date(ts*1000);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
+  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return (i>=3?n.toFixed(1):Math.round(n))+' '+u[i]}
+  function fmtDec(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1000&&i<4){n/=1000;i++}return (i>=3?n.toFixed(i===4?2:(n<100?1:0)):Math.round(n))+' '+u[i]}
+  function fmtSpeed(n){return n==null?'':(n>=1e6?(n/1e6).toFixed(1)+' MB/s':Math.round(n/1e3)+' KB/s')}
+  function fmtDur(s){if(s==null)return '—';var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?h+':'+pad(m)+':'+pad(x):m+':'+pad(x)}
+  function connLabel(c){return c==='usb'?'USB':(c==='wifi'?'无线':'—')}
+  function setFlash(t,s,ms){flash={t:t,s:s,until:Date.now()+(ms||8000)}}
+
+  // 标签切换
+  var tabs=document.querySelectorAll('.side button'),logTimer=null;
+  tabs.forEach(function(b){b.addEventListener('click',function(){
+    tabs.forEach(function(x){x.setAttribute('aria-selected',String(x===b))});
+    document.querySelectorAll('.pane').forEach(function(p){p.hidden=(p.id!=='p-'+b.dataset.p)});
+    clearInterval(logTimer);
+    if(b.dataset.p==='log'){loadLog();logTimer=setInterval(loadLog,3000)}
+  })});
+  function loadLog(){api('/api/log').then(function(j){var l=$('#logBox');var atEnd=l.scrollTop+l.clientHeight>=l.scrollHeight-8;l.textContent=j.lines.join('\n')||'（还没有日志）';if(atEnd)l.scrollTop=l.scrollHeight}).catch(function(){})}
+
+  // 渲染
+  function render(){
+    if(!S)return;
+    var d=S.device,job=S.job,res=S.result,last=S.last,st=S.storage;
+    var running=!!job, ok=d.connected&&d.paired;
+    $('#dot').style.background=!d.connected?'var(--sub)':(running?'var(--accent)':(d.paired?'var(--ok)':'var(--warn)'));
+
+    // LCD
+    var t,s,pct=0;
+    if(flash&&Date.now()<flash.until){t=flash.t;s=flash.s}
+    else if(running){
+      pct=job.pct;t=job.cancelling?'正在取消…':'正在备份';
+      s='已完成 '+Math.floor(job.pct)+'% · 已用时 '+fmtDur(job.elapsed);
+    }else if(!d.connected){t='未检测到设备';s='请用 USB 线连接设备，或确认设备和 NAS 在同一个 Wi-Fi'}
+    else if(!d.paired){t='尚未配对';s='到“连接与配对”页完成配对'}
+    else if(!S.config.configured){t='请选择备份保存位置';s='点“这台 NAS”旁边的文件夹按钮'}
+    else if(res&&S.now-res.ts<(res.status==='ok'?90:600)&&res.kind==='backup'){   // success fades after 90 s, problems stay 10 min
+      t=res.status==='ok'?'备份完成':(res.status==='cancelled'?'备份已取消':'备份失败');
+      s=res.status==='failed'&&res.error?res.error:(res.status==='cancelled'?'未完成的备份不会覆盖上一次的备份':'刚刚');
+    }else{t='已连接，正在待命';s=connLabel(d.conn)+(last&&last.ts?' · 上次备份 '+fmtTime(last.ts):' · 尚未备份')}
+    $('#lcdT').textContent=t;$('#lcdS').textContent=s||' ';$('#lcdBar').style.width=pct+'%';
+
+    // 设备信息
+    setIcon(d.ptype);
+    var hl=S.health||[];$('#healthCard').hidden=!hl.length;
+    if(hl.length){
+      $('#hcT').textContent='环境自检：有 '+hl.length+' 项需要处理';var ul=$('#hcL');ul.textContent='';
+      hl.forEach(function(x){var li=document.createElement('li'),b=document.createElement('b'),sp=document.createElement('span');b.textContent=x.title.zh;sp.textContent=x.fix.zh;li.appendChild(b);li.appendChild(document.createElement('br'));li.appendChild(sp);ul.appendChild(li)});
+    }
+    $('#hTitle').textContent=d.name||(/^iPad/.test(d.ptype||'')?'iPad':'iPhone');
+    renderDevices(S.devices||[],running||!!S.deleting);
+    $('#hVer').textContent=d.version?'iOS '+d.version:' ';
+    $('#kvUdid').textContent=d.udid||'—';
+    $('#kvConn').textContent=d.connected?connLabel(d.conn)+(d.paired?'（已信任）':'（未配对）'):'未连接';
+    $('#kvCap').textContent=d.capacity?fmtDec(d.capacity)+(d.free!=null?'，可用 '+fmtDec(d.free):''):'—';
+    $('#destPath').textContent=S.config.dir||'尚未选择';$('#pickBtn').disabled=running||!d.connected;
+    var kind=/^iPad/.test(d.ptype||'')?'iPad':'iPhone';
+
+    // 加密
+    var enc=d.encrypted;
+    $('#encChk').checked=enc===true;
+    $('#encChk').disabled=!ok||running;
+    $('#encSmall').textContent=!ok?'连接并配对后可用':(enc===true?'已开启。密码保存在手机里，以后每次备份自动使用。':(enc===false?'未开启。勾选后设置密码，以后每次备份自动使用。':'暂时读不到加密状态。'));
+    $('#goBackup').disabled=!ok||running||!!S.deleting;
+    $('#goDelete').disabled=!ok||running||!!S.deleting||!(S.storage&&S.storage.dir>0||S.last&&S.last.ts);
+    $('#goDelete').textContent=S.deleting?'正在删除…':'删除备份…';
+    $('#goBackup').textContent=running?'备份中…':'立即备份';
+
+    // 进度
+    $('#prog').hidden=!running;
+    if(running){
+      $('#pPct').textContent=Math.floor(job.pct)+'%';$('#pBar').style.width=job.pct+'%';
+      $('#pPhase').textContent=zhMsg(job.status||job.msg)||'正在准备…';
+      $('#pFile').textContent=job.file&&/receiv/i.test(job.status||'')?'正在接收：'+job.file:'';
+      $('#pElapsed').textContent='已用时 '+fmtDur(job.elapsed)+(job.bytes!=null?' · 已写入 '+fmtBytes(job.bytes):'')+(job.speed!=null?' · '+fmtSpeed(job.speed):'');
+      $('#pEta').textContent=fmtEta(job.eta);
+    }
+    var armed=Date.now()<armUntil&&running&&!job.cancelling;
+    $('#goCancel').hidden=!running;
+    $('#goCancel').disabled=running&&!!job.cancelling;
+    $('#goCancel').textContent=running&&job.cancelling?'正在取消…':(armed?'再点一次确认取消':'取消备份');
+    $('#lcdX').hidden=!running;
+    ['#lcdX','#pX'].forEach(function(id){
+      var b=$(id);b.disabled=running&&!!job.cancelling;
+      b.classList.toggle('armed',armed);b.textContent=armed?'确定取消？':'✕';
+    });
+
+    // 最新备份
+    $('#lbTime').textContent=last&&last.ts?fmtTime(last.ts)+(last.state&&last.state!=='finished'?'（未完成）':''):'尚未备份';
+    $('#lbSize').textContent=st.dir!=null?fmtBytes(st.dir):'—';
+    $('#lbEnc').textContent=last&&last.encrypted!=null?(last.encrypted?'是':'否'):'—';
+
+    // 存储
+    if(st.total){
+      var dirp=Math.max(0.4,(st.dir||0)/st.total*100),othp=Math.max(0,((st.used||0)-(st.dir||0))/st.total*100);
+      $('#capDir').style.width=dirp+'%';$('#capOth').style.width=othp+'%';
+      $('#lgDir').textContent=kind+' 备份 '+fmtBytes(st.dir);
+      $('#stTitle').textContent='NAS 存储 · '+(st.label||'')+'（所选文件夹所在的磁盘）';
+      $('#lgOth').textContent='其他文件 '+fmtBytes(Math.max(0,(st.used||0)-(st.dir||0)));
+      $('#lgFree').textContent='可用 '+fmtBytes(st.free);
+      $('#capImg').setAttribute('aria-label',kind+' 备份 '+fmtBytes(st.dir)+'，可用 '+fmtBytes(st.free));
+    }
+
+    // 记录
+    var body=$('#rows');body.textContent='';
+    if(!S.history.length){var tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=5;td.style.color='var(--sub)';td.textContent='还没有备份记录。回到“摘要”页点“立即备份”开始第一次备份。';tr.appendChild(td);body.appendChild(tr)}
+    S.history.forEach(function(h){
+      var tr=document.createElement('tr');
+      function cell(x){var td=document.createElement('td');td.textContent=x;tr.appendChild(td);return td}
+      cell(fmtTime(h.ts));cell((h.way==='wifi'?'无线':'USB')+(h.source==='schedule'?' · 定时':' · 手动'));cell(h.size!=null?fmtBytes(h.size):'—');cell(fmtDur(h.duration));
+      var td=document.createElement('td'),p=document.createElement('span');
+      p.className='pill '+(h.status==='ok'?'ok':(h.status==='cancelled'?'mute':'bad'));
+      p.textContent=h.status==='ok'?'成功'+(h.encrypted===true?' · 已加密':(h.encrypted===false?' · 未加密':'')):(h.status==='cancelled'?'已取消':'失败');
+      if(h.error)td.title=h.error;
+      td.appendChild(p);tr.appendChild(td);body.appendChild(tr);
+    });
+    document.querySelectorAll('.pathNas').forEach(function(e){e.textContent=S.paths.nas||'（先选择备份位置）'});$('#pathWin').textContent=S.paths.windows;$('#pathMac').textContent=S.paths.mac;
+
+    // 首次进入：设备已连接但还没选备份位置，自动弹出选择器
+    if(d.connected&&d.udid&&!S.config.configured&&!pickAuto[d.udid]&&dlg.hidden){pickAuto[d.udid]=true;openPicker()}
+
+    renderSchedule();
+
+    // 连接与配对
+    function step(id,cls,title,desc){var e=$('#'+id);e.className='step '+cls;$('#'+id+'t').textContent=title;$('#'+id+'d').textContent=desc}
+    step('s1',d.connected&&d.conn==='usb'?'done':(d.connected?'done':'cur'),d.conn==='usb'?'USB 已识别':(d.conn==='wifi'?'已通过无线找到手机':'未检测到手机'),
+         d.connected?'设备 '+d.udid:'用 USB 线把手机接到 NAS，并解锁手机。');
+    step('s2',d.paired?'done':(d.connected?'cur':''),d.paired?'已信任此电脑':'信任此电脑',
+         d.paired?'配对记录保存在 NAS，重启容器后仍然有效。':'点“配对”后，在手机上点“信任”并输入锁屏密码。');
+    $('#pairBtn').hidden=!(d.connected&&d.conn==='usb'&&d.paired===false);
+    step('s3',d.wifiSync?'done':(d.paired?'cur':''),d.wifiSync?'Wi-Fi 同步已开启':'开启 Wi-Fi 同步',
+         d.wifiSync?'手机允许通过 Wi-Fi 被连接。':(d.paired?'需要在 USB 连接时开启一次。':'先完成配对。'));
+    $('#wifiBtn').hidden=!(d.paired&&d.conn==='usb'&&!d.wifiSync);
+    var wifiSeen=d.netIds&&d.netIds.length>0;
+    step('s4',wifiSeen?'done':(d.wifiSync?'cur':''),wifiSeen?'已通过无线找到手机':'测试无线连接',wifiSeen?'':'拔掉 USB 线，再点“检测”。');
+  }
+
+  var authed=false,pollTimer=null;
+  function poll(){
+    if(!authed)return;
+    api('/api/status').then(function(j){S=j;render()}).catch(function(){
+      if(!authed)return;
+      $('#lcdT').textContent='连接不上备份服务';$('#lcdS').textContent='请检查 NAS 上的 ios-backup-station 容器是否在运行';$('#dot').style.background='var(--sub)'
+    }).then(function(){if(authed)pollTimer=setTimeout(poll,S&&S.job?1200:4000)});
+  }
+
+  // ---- 访问密码：第一次设置（输两遍），以后只输一次；输错两次后显示提示词
+  function authPost(path,body){
+    return fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})})
+      .then(function(r){return r.json().then(function(j){j._status=r.status;return j})});
+  }
+  function enterApp(){
+    authed=true;$('#lock').hidden=true;$('#logoutBtn').hidden=false;clearTimeout(pollTimer);poll();
+  }
+  function showLock(st,info){
+    authed=false;clearTimeout(pollTimer);S=null;
+    var L=$('#lock'),box=$('#lockBox');box.textContent='';L.hidden=false;$('#logoutBtn').hidden=true;
+    var first=st==='unset';
+    var brand=el('div','brand');brand.appendChild(el('code',null,'ios-backup-station'));box.appendChild(brand);
+    box.appendChild(el('p','lead',first?'设置访问密码':'输入密码'));
+    function field(id,ph,type,auto){
+      var i=document.createElement('input');i.id=id;i.type=type;i.placeholder=ph;i.autocomplete=auto;i.setAttribute('aria-label',ph);
+      box.appendChild(i);return i;
+    }
+    var p1=field('lkPw','密码','password',first?'new-password':'current-password'),p2=null,hint=null;
+    if(first){
+      p2=field('lkPw2','再输入一次','password','new-password');
+      var tg=el('button','linkbtn','添加提示词（可选）');tg.type='button';
+      hint=field('lkHint','输错两次后显示，不要直接写密码','text','off');hint.maxLength=100;hint.hidden=true;
+      tg.onclick=function(){hint.hidden=false;tg.hidden=true;hint.focus()};
+      box.insertBefore(tg,hint);
+    }
+    var err=el('div','err');err.setAttribute('role','alert');box.appendChild(err);
+    var hl=el('div','hintline');hl.hidden=true;box.appendChild(hl);
+    function showHint(h){if(h){hl.textContent='提示：'+h;hl.hidden=false}}
+    if(info&&info.hint)showHint(info.hint);
+    var go=el('button','b pri go',first?'设置密码':'进入');go.type='button';box.appendChild(go);
+    var fg=el('details','forgot');fg.appendChild(el('summary',null,'忘记密码？'));
+    fg.appendChild(el('p',null,'在 NAS 上，把项目文件夹里的 config/auth.json 删除，再重启容器就能重新设置。'));box.appendChild(fg);
+    function submit(){
+      err.textContent='';
+      if(first){
+        if(!p1.value){err.textContent='请输入密码。';return}
+        if(p1.value!==p2.value){err.textContent='两次输入的密码不一致。';return}
+      }else if(!p1.value){err.textContent='请输入密码。';p1.focus();return}
+      go.disabled=true;
+      authPost(first?'/api/auth/setup':'/api/auth/login',first?{password:p1.value,hint:hint.value.trim()}:{password:p1.value})
+        .then(function(j){
+          go.disabled=false;
+          if(j.ok){enterApp();return}
+          err.textContent=j.error||'失败，请重试。';showHint(j.hint);p1.select();
+        }).catch(function(){go.disabled=false;err.textContent='连接不上备份服务。'});
+    }
+    go.onclick=submit;
+    box.onkeydown=function(e){if(e.key==='Enter')submit()};
+    p1.focus();
+  }
+  function authInit(){
+    fetch('/api/auth').then(function(r){return r.json()}).then(function(j){
+      var pv=null;try{pv=new URLSearchParams(location.search).get('lock')}catch(e){}
+      if(j.state==='ok')enterApp();else showLock(j.state==='unset'&&pv==='login'?'locked':j.state,j);   // ?lock=login：只用来预览登录界面
+    }).catch(function(){$('#lcdT').textContent='连接不上备份服务'});
+  }
+  $('#logoutBtn').addEventListener('click',function(){authPost('/api/auth/logout').then(function(){showLock('locked')})});
+  authInit();
+
+  // 对话框
+  var dlg=$('#dlg'),dBox=$('#dBox'),lastFocus=null,pendingAfter=null,dlgBusy=false;   // dlgBusy: waiting for the phone, do not close
+  function closeD(){dlg.hidden=true;if(lastFocus)lastFocus.focus()}
+  function openD(mode){
+    lastFocus=document.activeElement;var h='';
+    if(mode==='first'){
+      h='<h2 id="dTitle">第一次备份</h2><p>要加密这个备份吗？选好以后，每次备份都会沿用，不会再问。</p>'+
+        '<p class="warn">加密后，备份才会包含健康数据、已保存的密码和 Wi-Fi 密码。</p>'+
+        '<div class="dbtn"><button class="b" data-a="no" type="button">不加密</button><button class="b pri" data-a="yes" type="button">加密…</button></div>';
+    }else if(mode==='enable'){
+      h='<h2 id="dTitle">设置备份密码</h2><p>密码保存在你的手机里。忘记密码就无法恢复备份，请记好。</p>'+
+        '<label for="pw1">密码</label><input id="pw1" type="password" autocomplete="new-password">'+
+        '<label for="pw2">再输入一次</label><input id="pw2" type="password" autocomplete="new-password">'+
+        '<div class="err" id="dErr" role="alert"></div>'+
+        '<p>这个密码只用于这一次设置，不会保存在 NAS 上。设置时手机可能会要你输入锁屏密码。</p>'+
+        '<div class="dbtn"><button class="b" data-a="cancel" type="button">取消</button><button class="b pri" data-a="ok" type="button">开启加密</button></div>';
+    }else if(mode==='disable'){
+      h='<h2 id="dTitle">关闭备份加密</h2><p>输入当前的备份密码来关闭。关闭后新备份不再包含健康数据和已保存的密码。</p>'+
+        '<label for="pw1">当前密码</label><input id="pw1" type="password" autocomplete="current-password">'+
+        '<div class="err" id="dErr" role="alert"></div>'+
+        '<div class="dbtn"><button class="b" data-a="cancel" type="button">取消</button><button class="b pri" data-a="off" type="button">关闭加密</button></div>';
+    }else if(mode==='delete'){
+      h='<h2 id="dTitle">删除这台设备的备份</h2><p>会把 NAS 上这台设备（<span id="dName"></span>）的整个备份删除，并清空备份记录。<b>无法撤销。</b></p>'+
+        '<p class="warn">手机上的内容和备份密码不受影响。删除后，下一次备份会重新完整备份，用时较长。</p>'+
+        '<label for="dc">输入“删除”以确认</label><input id="dc" type="text" autocomplete="off">'+
+        '<div class="err" id="dErr" role="alert"></div>'+
+        '<div class="dbtn"><button class="b" data-a="cancel" type="button">取消</button><button class="b pri" data-a="del" type="button">删除备份</button></div>';
+    }else{
+      h='<h2 id="dTitle">恢复备份</h2><p>恢复要在 Windows 的 iTunes 里进行：先把备份文件夹拷到 iTunes 的备份目录，再点“恢复备份”。</p>'+
+        '<p>具体步骤和路径在“备份记录”页的最下面。</p>'+
+        '<div class="dbtn"><button class="b pri" data-a="cancel" type="button">知道了</button></div>';
+    }
+    dBox.className='dlgbox';dBox.innerHTML=h;dlg.hidden=false;
+    var dn=$('#dName');if(dn)dn.textContent=(S&&S.device&&S.device.name)||'';
+    var f=$('#pw1')||$('#dc');if(f)f.focus();else dBox.querySelector('.pri').focus();
+  }
+  function asked(){try{return localStorage.getItem('ib_asked')==='1'}catch(e){return false}}
+  function setAsked(){try{localStorage.setItem('ib_asked','1')}catch(e){}}
+
+  function startBackup(){
+    api('/api/backup',{}).then(function(j){
+      if(j.error)setFlash('无法开始备份',j.error);
+      return api('/api/status').then(function(x){S=x;render()});
+    }).catch(function(){setFlash('无法开始备份','连接不上备份服务')});
+  }
+  $('#goBackup').addEventListener('click',function(){
+    if(!S||S.job)return;
+    var d=S.device;
+    if(!S.config.configured){openPicker();return}
+    if(d.encrypted!==true&&!(S.last&&S.last.ts)&&!asked()){openD('first');return}
+    startBackup();
+  });
+  // 取消：第一次点击先确认，4 秒内再点一次才真正取消
+  function cancelClick(){
+    if(!S||!S.job||S.job.cancelling)return;
+    if(Date.now()<armUntil){
+      armUntil=0;
+      api('/api/cancel',{}).then(function(j){if(j.error)setFlash('无法取消',j.error);poll1()}).catch(function(){setFlash('无法取消','连接不上备份服务')});
+      return;
+    }
+    armUntil=Date.now()+4000;render();setTimeout(render,4100);
+  }
+  ['#goCancel','#lcdX','#pX'].forEach(function(id){$(id).addEventListener('click',cancelClick)});
+  $('#goRestore').addEventListener('click',function(){openD('restore')});
+  $('#goDelete').addEventListener('click',function(){if(!S||S.job||S.deleting)return;openD('delete')});
+  $('#encChk').addEventListener('click',function(e){
+    e.preventDefault();if(!S||S.job)return;
+    if(!S.config.configured){openPicker();return}
+    openD(S.device.encrypted===true?'disable':'enable');
+  });
+
+  function doEncryption(enable,pw,after){
+    var err=$('#dErr');
+    err.style.color='var(--sub)';err.textContent='正在向手机设置，请留意手机屏幕，可能要输入锁屏密码…';
+    dBox.querySelectorAll('button').forEach(function(b){b.disabled=true});dlgBusy=true;
+    api('/api/encryption',{enable:enable,password:pw}).then(function(j){
+      dlgBusy=false;
+      if(j.ok){closeD();setFlash(enable?'已开启备份加密':'已关闭备份加密','');poll1();if(after)after();return}
+      err.style.color='';err.textContent=j.error||'设置失败，请重试。';
+      dBox.querySelectorAll('button').forEach(function(b){b.disabled=false});
+    }).catch(function(){
+      dlgBusy=false;err.style.color='';err.textContent='连接不上备份服务。';
+      dBox.querySelectorAll('button').forEach(function(b){b.disabled=false});
+    });
+  }
+  // 设备切换：只有同时看到不止一台设备时才出现；备份或删除进行中不能切换
+  var devMenu=$('#devMenu'),devBtn=$('#devSwBtn');
+  function closeDevMenu(){devMenu.hidden=true;devBtn.setAttribute('aria-expanded','false')}
+  function renderDevices(list,locked){
+    $('#devSw').hidden=list.length<2;
+    if(list.length<2)closeDevMenu();
+    devBtn.disabled=!!locked;devBtn.title=locked?'备份进行中，不能切换设备':'切换设备';
+    devMenu.textContent='';
+    list.forEach(function(x){
+      var b=document.createElement('button');b.type='button';b.setAttribute('role','menuitemradio');b.setAttribute('aria-checked',String(!!x.selected));
+      var ck=document.createElement('span');ck.className='ck';ck.textContent=x.selected?'✓':'';
+      var dn=document.createElement('span');dn.className='dn';
+      var nm=document.createElement('b');nm.textContent=x.name||(/^iPad/.test(x.ptype||'')?'iPad':'iPhone');
+      var sm=document.createElement('small');sm.textContent=(/^iPad/.test(x.ptype||'')?'iPad':'iPhone')+' · '+connLabel(x.conn);
+      dn.appendChild(nm);dn.appendChild(sm);b.appendChild(ck);b.appendChild(dn);
+      b.onclick=function(){
+        if(x.selected){closeDevMenu();return}
+        api('/api/select',{udid:x.udid}).then(function(j){
+          closeDevMenu();
+          if(j.error)setFlash('无法切换设备',j.error);
+          else setFlash('已切换设备','');
+          poll1();setTimeout(poll1,3500);
+        }).catch(function(){closeDevMenu();setFlash('无法切换设备','连接不上备份服务')});
+      };
+      devMenu.appendChild(b);
+    });
+  }
+  devBtn.addEventListener('click',function(e){e.stopPropagation();var open=devMenu.hidden;devMenu.hidden=!open;devBtn.setAttribute('aria-expanded',String(open))});
+  document.addEventListener('click',function(e){if(!devMenu.hidden&&!devMenu.contains(e.target))closeDevMenu()});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!devMenu.hidden){closeDevMenu();devBtn.focus()}});
+  function poll1(){api('/api/status').then(function(x){S=x;render()}).catch(function(){})}
+
+  dBox.addEventListener('click',function(e){
+    var a=e.target.getAttribute&&e.target.getAttribute('data-a');if(!a)return;
+    var err=$('#dErr');
+    if(a==='cancel'){closeD();return}
+    if(a==='no'){setAsked();closeD();startBackup();return}
+    if(a==='yes'){openD('enable');return}
+    if(a==='ok'){
+      var p1=$('#pw1').value,p2=$('#pw2').value;
+      if(!p1){err.style.color='';err.textContent='请输入密码。';return}
+      if(p1!==p2){err.style.color='';err.textContent='两次输入的密码不一致。';return}
+      setAsked();
+      doEncryption(true,p1,function(){if(S&&!(S.last&&S.last.ts))startBackup()});
+      return;
+    }
+    if(a==='del'){
+      if($('#dc').value.trim()!=='删除'){err.style.color='';err.textContent='请输入“删除”两个字。';return}
+      dBox.querySelectorAll('button').forEach(function(b){b.disabled=true});
+      api('/api/delete-backup',{confirm:S.device.udid}).then(function(j){
+        if(j.ok){closeD();setFlash('正在删除备份','文件很多时可能要一两分钟');poll1();return}
+        err.style.color='';err.textContent=j.error||'删除失败。';
+        dBox.querySelectorAll('button').forEach(function(b){b.disabled=false});
+      }).catch(function(){err.style.color='';err.textContent='连接不上备份服务。';dBox.querySelectorAll('button').forEach(function(b){b.disabled=false})});
+      return;
+    }
+    if(a==='off'){
+      var p=$('#pw1').value;
+      if(!p){err.style.color='';err.textContent='请输入当前密码。';return}
+      doEncryption(false,p);
+    }
+  });
+  dlg.addEventListener('click',function(e){if(e.target===dlg&&!dlgBusy)closeD()});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!dlg.hidden&&!dlgBusy)closeD()});
+
+  // ---- 设备图标：按手机报告的型号代码（ProductType）选择
+  var FOLD_TYPES=['iPhone19,4'];   // iPhone Duo（折叠屏）；预览用 ?ptype=fold
+  function iconKind(pt){
+    if(pt==='fold'||FOLD_TYPES.indexOf(pt)>=0)return 'fold';
+    var m=/^(iPhone|iPad)(\d+),(\d+)$/.exec(pt||'');
+    if(!m)return 'island';
+    var maj=+m[2],min=+m[3];
+    if(m[1]==='iPad')return (maj===8||maj>=13)?'ipad-full':'ipad-button';
+    if(maj<=9||(maj===10&&[1,2,4,5].indexOf(min)>=0)||pt==='iPhone12,8'||pt==='iPhone14,6')return 'button';
+    if((maj===10)||maj===11||maj===12||maj===13||(maj===14&&[2,3,4,5,7,8].indexOf(min)>=0))return 'notch';
+    return 'island';
+  }
+  function iconSVG(kind){
+    var B='fill="var(--card)" stroke="var(--text)" stroke-width="3"',SC='fill="var(--bar)"',INK='fill="var(--text)"';
+    var o={
+      'island':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="14" '+B+'/><rect x="5" y="5" width="48" height="102" rx="10.5" '+SC+'/><rect x="20" y="9.5" width="18" height="5.5" rx="2.75" '+INK+'/></svg>',
+      'notch':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="14" '+B+'/><rect x="5" y="5" width="48" height="102" rx="10.5" '+SC+'/><path d="M17 5h24v2.5a4.5 4.5 0 0 1-4.5 4.5h-15A4.5 4.5 0 0 1 17 7.5z" '+INK+'/></svg>',
+      'button':'<svg viewBox="0 0 58 112" width="58" height="112"><rect x="1.5" y="1.5" width="55" height="109" rx="10" '+B+'/><rect x="6" y="17" width="46" height="70" rx="1.5" '+SC+'/><rect x="22" y="8" width="14" height="3" rx="1.5" '+INK+'/><circle cx="29" cy="99" r="5.5" fill="none" stroke="var(--text)" stroke-width="2"/></svg>',
+      'ipad-button':'<svg viewBox="0 0 84 112" width="84" height="112"><rect x="1.5" y="1.5" width="81" height="109" rx="9" '+B+'/><rect x="7" y="13" width="70" height="78" rx="1.5" '+SC+'/><circle cx="42" cy="7" r="1.6" '+INK+'/><circle cx="42" cy="102" r="5" fill="none" stroke="var(--text)" stroke-width="2"/></svg>',
+      'fold':'<svg viewBox="0 0 110 90" width="137" height="112"><rect x="1.5" y="1.5" width="107" height="87" rx="11" '+B+'/><rect x="5.5" y="5.5" width="48" height="79" rx="6" '+SC+'/><rect x="56.5" y="5.5" width="48" height="79" rx="6" '+SC+'/><path d="M55 5v80" stroke="var(--text)" stroke-width="1.5" stroke-dasharray="2 3"/><circle cx="97" cy="11.5" r="2" '+INK+'/></svg>',
+      'ipad-full':'<svg viewBox="0 0 84 112" width="84" height="112"><rect x="1.5" y="1.5" width="81" height="109" rx="9" '+B+'/><rect x="6" y="6" width="72" height="100" rx="4.5" '+SC+'/><circle cx="42" cy="3.6" r="1.1" '+INK+'/></svg>'
+    };
+    return o[kind]||o.island;
+  }
+  var lastIcon='';
+  function setIcon(pt){
+    var q=null;try{q=new URLSearchParams(location.search).get('ptype')}catch(e){}   // 预览用：?ptype=iPad14,3
+    var k=iconKind(q||pt);
+    if(k!==lastIcon){lastIcon=k;$('#devIcon').innerHTML=iconSVG(k)}
+  }
+
+  // ---- 文字翻译与时间格式
+  function zhMsg(m){
+    if(!m)return '';
+    var t=[[/waiting for passcode/i,'请在手机上输入锁屏密码，输入后才会开始备份'],[/receiving files/i,'正在接收文件'],[/sending files/i,'正在发送文件'],
+      [/requesting backup/i,'正在向手机请求备份…'],[/will be encrypted/i,'备份将被加密'],[/incremental backup/i,'增量备份：只传变化的文件'],
+      [/full backup/i,'完整备份'],[/backup successful/i,'备份完成'],[/preparing|starting/i,'正在准备…']];
+    for(var i=0;i<t.length;i++)if(t[i][0].test(m))return t[i][1];
+    return m;
+  }
+  function fmtEta(sec){
+    if(sec==null)return '剩余时间计算中';
+    var m=Math.round(sec/60);
+    if(m<2)return '剩余不到 2 分钟';
+    if(m>15)m=Math.round(m/5)*5;
+    if(m>=60){var h=Math.floor(m/60),r=m%60;return '剩余约 '+h+' 小时'+(r?' '+r+' 分钟':'')}
+    return '剩余约 '+m+' 分钟';
+  }
+
+  // ---- 备份文件夹选择器：只显示 NAS 共享给备份服务的文件夹
+  var FOLDER='<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2.5h8a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
+  var UP='<svg viewBox="0 0 24 24"><path d="M12 19V6"/><path d="M6.5 11.5 12 6l5.5 5.5"/></svg>';
+  var pk={path:'',els:null};
+  function el(tag,cls,text){var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e}
+  function openPicker(){
+    lastFocus=document.activeElement;
+    dBox.className='dlgbox wide';dBox.textContent='';
+    var who=S&&S.device&&S.device.connected?'“'+(S.device.name||'这台设备')+'”':'这台设备';
+    var h=el('h2',null,'选择备份文件夹');h.id='dTitle';
+    var intro=el('p',null,'为 '+who+' 选择备份保存的位置。这里只显示 NAS 共享给备份服务的文件夹，每台设备可以各选一个。');
+    var crumb=el('div','crumb mono');
+    var sugg=el('div','sugg');sugg.hidden=true;
+    var list=el('div','flist');
+    var mk=el('div','mkrow'),inp=el('input');inp.id='pkNew';inp.placeholder='新建文件夹的名称';inp.setAttribute('aria-label','新建文件夹的名称');
+    var mkb=el('button','b','新建');mkb.type='button';mk.appendChild(inp);mk.appendChild(mkb);
+    var note=el('p',null,(S&&S.last&&S.last.ts)?'已有的备份不会自动搬到新位置。':'');
+    var err=el('div','err');err.setAttribute('role','alert');
+    var btns=el('div','dbtn'),cancel=el('button','b','取消'),ok=el('button','b pri','选择此文件夹');cancel.type='button';ok.type='button';
+    btns.appendChild(cancel);btns.appendChild(ok);
+    [h,intro,crumb,sugg,list,mk,note,err,btns].forEach(function(x){dBox.appendChild(x)});
+    pk.els={crumb:crumb,list:list,sugg:sugg,mk:mk,ok:ok,err:err,inp:inp};
+    cancel.onclick=closeD;
+    ok.onclick=function(){choosePick(pk.path)};
+    function doMk(){
+      var name=inp.value.trim();if(!name||!pk.path)return;
+      api('/api/mkdir',{parent:pk.path,name:name}).then(function(j){
+        if(j.error){err.textContent=j.error;return}
+        inp.value='';err.textContent='';browsePick(pk.path);
+      }).catch(function(){err.textContent='连接不上备份服务。'});
+    }
+    mkb.onclick=doMk;inp.addEventListener('keydown',function(e){if(e.key==='Enter')doMk()});
+    dlg.hidden=false;browsePick('');ok.focus();
+  }
+  function pickItem(icon,title,sub,fn){
+    var b=el('button','fitem');b.type='button';b.innerHTML=icon;
+    var t=el('span');t.appendChild(document.createTextNode(title));
+    if(sub){var sm=el('small',null,sub);t.appendChild(sm)}
+    b.appendChild(t);b.onclick=fn;return b;
+  }
+  function browsePick(path){
+    var E=pk.els;E.err.textContent='';
+    api('/api/browse?path='+encodeURIComponent(path)).then(function(j){
+      if(j.error){E.err.textContent=j.error;return}
+      pk.path=j.path;E.list.textContent='';
+      E.crumb.textContent=j.path?j.host+(j.volume?'　可用 '+fmtBytes(j.volume.free)+' / 共 '+fmtBytes(j.volume.total):''):'NAS 存储空间';
+      E.ok.disabled=!j.path;E.mk.hidden=!j.path;
+      if(j.path)E.list.appendChild(pickItem(UP,'上一级',null,function(){browsePick(j.parent)}));
+      (j.volumes||[]).forEach(function(v){
+        E.list.appendChild(pickItem(FOLDER,v.label+'　'+v.host,'可用 '+fmtBytes(v.free)+' / 共 '+fmtBytes(v.total),function(){browsePick(v.path)}));
+      });
+      (j.dirs||[]).forEach(function(n){
+        E.list.appendChild(pickItem(FOLDER,n,null,function(){browsePick(j.path+'/'+n)}));
+      });
+      if(j.path&&!(j.dirs||[]).length)E.list.appendChild(el('div','fempty','这里没有子文件夹，可以直接选择此文件夹，或者新建一个。'));
+      E.sugg.textContent='';E.sugg.hidden=true;
+      if(!j.path&&j.suggest){
+        E.sugg.hidden=false;
+        E.sugg.appendChild(el('span',null,'推荐：'+j.suggest.host+'（剩余空间最多的磁盘）'));
+        var b=el('button','b btn-sm','使用推荐位置');b.type='button';
+        b.onclick=function(){
+          var path=j.suggest.path,i=path.lastIndexOf('/');
+          api('/api/mkdir',{parent:path.slice(0,i),name:path.slice(i+1)}).then(function(m){
+            if(m.error){E.err.textContent=m.error;return}
+            choosePick(m.path);
+          }).catch(function(){E.err.textContent='连接不上备份服务。'});
+        };
+        E.sugg.appendChild(b);
+      }
+    }).catch(function(){E.err.textContent='连接不上备份服务。'});
+  }
+  function choosePick(path){
+    var E=pk.els;if(!path)return;
+    api('/api/config',{path:path}).then(function(j){
+      if(j.error){E.err.textContent=j.error;return}
+      closeD();poll1();setFlash('备份位置已设置','');
+    }).catch(function(){E.err.textContent='连接不上备份服务。'});
+  }
+  $('#pickBtn').addEventListener('click',function(){if(S&&!S.job)openPicker()});
+
+  // ---- 定时备份页
+  var schDirty=false,DAYN=['一','二','三','四','五','六','日'];
+  (function(){
+    var w=$('#schDays');
+    DAYN.forEach(function(n,i){
+      var l=el('label','chk');l.style.margin='0 14px 0 0';
+      var c=document.createElement('input');c.type='checkbox';c.value=String(i);c.id='schD'+i;
+      l.appendChild(c);l.appendChild(document.createTextNode('周'+n));w.appendChild(l);
+    });
+  })();
+  $('#p-sch').addEventListener('input',function(){schDirty=true;$('#schMsg').textContent=''});
+  function renderSchedule(){
+    var sc=S.schedule,d=S.device;if(!sc)return;
+    $('#schNow').textContent='NAS 当前时间：'+sc.serverTime+'（'+sc.tz+'）';
+    $('#schNext').textContent=sc.enabled?(sc.nextStr?'下一次备份：'+sc.nextStr:'没有可用的日期，请选择重复的日期'):'定时备份已关闭';
+    var can=d.connected&&d.paired&&S.config.configured;
+    $('#schSave').disabled=!d.connected;
+    $('#schWarn').textContent=can?'':'需要先连接并配对手机、选好备份位置，定时备份才能运行。';
+    if(!schDirty){
+      $('#schOn').checked=!!sc.enabled;$('#schTime').value=sc.time;$('#schRetry').value=String(sc.retryHours);
+      DAYN.forEach(function(n,i){$('#schD'+i).checked=sc.days.indexOf(i)>=0});
+    }
+  }
+  $('#schSave').addEventListener('click',function(){
+    var days=[];DAYN.forEach(function(n,i){if($('#schD'+i).checked)days.push(i)});
+    var m=$('#schMsg');m.textContent='保存中…';
+    api('/api/schedule',{enabled:$('#schOn').checked,time:$('#schTime').value,days:days,retryHours:+$('#schRetry').value}).then(function(j){
+      if(j.error){m.textContent=j.error;return}
+      schDirty=false;m.textContent='已保存';poll1();
+    }).catch(function(){m.textContent='保存失败'});
+  });
+
+  // ---- 恢复教程：Windows / macOS 切换
+  function setOS(os){
+    $('#osWin').setAttribute('aria-pressed',String(os==='win'));$('#osMac').setAttribute('aria-pressed',String(os==='mac'));
+    $('#cardWin').hidden=os!=='win';$('#cardMac').hidden=os!=='mac';
+  }
+  $('#osWin').addEventListener('click',function(){setOS('win')});
+  $('#osMac').addEventListener('click',function(){setOS('mac')});
+  try{if(/Mac/.test(navigator.platform))setOS('mac')}catch(e){}
+
+  // 连接页按钮
+  $('#pairBtn').addEventListener('click',function(){
+    var o=$('#pairOut');o.textContent='请在手机上点“信任”并输入锁屏密码…';this.disabled=true;var b=this;
+    api('/api/pair',{}).then(function(j){o.textContent=j.ok?'配对成功':(j.message||j.error||'配对失败');b.disabled=false;poll1()}).catch(function(){o.textContent='连接不上备份服务';b.disabled=false});
+  });
+  $('#wifiBtn').addEventListener('click',function(){
+    var o=$('#wifiOut');o.textContent='正在设置…';this.disabled=true;var b=this;
+    api('/api/wifi-sync',{enable:true}).then(function(j){o.textContent=j.ok?'已开启':(j.message||j.error||'设置失败');b.disabled=false;poll1()}).catch(function(){o.textContent='连接不上备份服务';b.disabled=false});
+  });
+  $('#probe').addEventListener('click',function(){
+    var o=$('#probeOut');o.textContent='检测中，如果需要会自动重新连接，最多十几秒…';
+    api('/api/probe',{}).then(function(j){
+      o.textContent='';var p=document.createElement('span');
+      if(j.net.length){p.className='pill ok';p.textContent=j.restarted?'已重新连接，通过无线找到手机':'已通过无线找到手机'}
+      else if(j.usb.length){p.className='pill mute';p.textContent='只通过 USB 找到手机，没有无线信号'}
+      else{p.className='pill bad';p.textContent='没有找到手机'}
+      o.appendChild(p);poll1();
+    }).catch(function(){o.textContent='连接不上备份服务'});
+  });
+
+  // 复制路径（http 下没有 clipboard API，用 execCommand 兜底）
+  function copy(text,btn){
+    var out=btn.parentNode.querySelector('.copyOut');
+    function done(ok){out.textContent=ok?'已复制':'复制失败，请手动选择文字复制';setTimeout(function(){out.textContent=''},2500)}
+    if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(text).then(function(){done(true)},function(){done(false)});return}
+    var ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.select();
+    var ok=false;try{ok=document.execCommand('copy')}catch(e){}
+    document.body.removeChild(ta);done(ok);
+  }
+  [['copyNas','nas'],['copyNas2','nas'],['copyWin','windows'],['copyMac','mac']].forEach(function(x){
+    $('#'+x[0]).addEventListener('click',function(){if(S&&S.paths[x[1]])copy(S.paths[x[1]],this)});
+  });
+})();
+</script>
