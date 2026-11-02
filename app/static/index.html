@@ -341,12 +341,7 @@ details.faq .fb p{margin:8px 0}
           </table>
         </div>
         <div class="sec" style="margin-top:22px">
-          <h3>恢复备份</h3>
-          <div class="card" style="margin:12px 0;padding:16px">
-            <b>实验功能：从 NAS 直接恢复</b>
-            <p class="sub">通过 USB 将 NAS 上的完整备份恢复到这台手机。我们已在 iPhone 15（iOS 27.0）上实测，欢迎大家测试其他版本并反馈结果。</p>
-            <button class="b pri" id="restoreFromNas" type="button">从 NAS 恢复备份（实验功能）…</button>
-          </div>
+          <h3>电脑端恢复说明</h3>
           <div class="seg" role="group" aria-label="电脑系统"><button type="button" id="osWin" aria-pressed="true">Windows</button><button type="button" id="osMac" aria-pressed="false">macOS</button></div>
           <div class="card" id="cardWin">
             <div class="step"><span class="n">1</span><div><b>打开 NAS 备份目录</b><span class="mono pathNas">—</span><span>复制里面这台设备的 UDID 文件夹，保留原名。</span></div></div>
@@ -513,10 +508,6 @@ details.faq .fb p{margin:8px 0}
     $('#goDelete').disabled=!ok||running||!!S.deleting||!(S.storage&&S.storage.dir>0||S.last&&S.last.ts);
     $('#goDelete').textContent=S.deleting?'正在删除…':'删除备份…';
     $('#goBackup').textContent=running?(job.kind==='restore'?'正在恢复…':'备份中…'):'立即备份';
-    var restoreBtn=$('#restoreFromNas');
-    restoreBtn.disabled=running||S.otherJob||S.deleting||d.conn!=='usb'||!d.paired||!last||last.state!=='finished';
-    restoreBtn.textContent=job&&job.kind==='restore'?'正在恢复…':'从 NAS 恢复备份（实验功能）…';
-
     // 进度
     $('#prog').hidden=!running;
     if(running){
@@ -739,7 +730,7 @@ details.faq .fb p{margin:8px 0}
         '<div class="dbtn"><button class="b" data-a="cancel" type="button">取消</button><button class="b pri" data-a="del" type="button">删除备份</button></div>';
     }else{
       var enc=!!(S&&S.last&&S.last.encrypted),deviceName=(S&&S.device&&S.device.name)||'这台手机';
-      h='<h2 id="dTitle">从 NAS 恢复备份（实验功能）</h2><p>我们已在 iPhone 15（iOS 27.0）上完成实测。欢迎测试其他机型和系统版本并反馈结果。恢复期间请保持 USB 连接。</p>'+
+      h='<h2 id="dTitle">从 NAS 恢复备份</h2><p><span class="pill warn" style="font-size:12px;padding:3px 10px">实验功能</span></p><p>我们已在 iPhone 15（iOS 27.0）上完成实测。欢迎测试其他机型和系统版本并反馈结果。恢复期间请保持 USB 连接。</p>'+
         '<p>恢复到当前选中的手机。请先关闭“查找我的 iPhone”；目标 iOS 版本必须不低于备份版本。</p>'+
         (enc?'<label for="restorePw">备份密码</label><input id="restorePw" type="password" autocomplete="current-password">':'')+
         '<div class="err" id="dErr" role="alert"></div>'+
@@ -779,7 +770,6 @@ details.faq .fb p{margin:8px 0}
   }
   ['#goCancel','#lcdX','#pX'].forEach(function(id){$(id).addEventListener('click',cancelClick)});
   $('#goRestore').addEventListener('click',function(){openD('restore')});
-  $('#restoreFromNas').addEventListener('click',function(){if(!S||S.job||S.deleting)return;openD('restore')});
   $('#goDelete').addEventListener('click',function(){if(!S||S.job||S.deleting)return;openD('delete')});
   $('#encChk').addEventListener('click',function(e){
     e.preventDefault();if(!S||S.job)return;

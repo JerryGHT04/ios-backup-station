@@ -104,6 +104,7 @@ h1.ttl{margin:0;font-size:28px;font-weight:700;letter-spacing:-.02em;line-height
 .sh-h{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:2px 0 12px}
 .sh-h h2{margin:0;font-size:22px;font-weight:700;letter-spacing:-.015em}
 .sh-h button{border:0;background:none;color:var(--accent-ink);font-size:16px;font-weight:600;padding:6px 2px}
+.experiment-badge{display:inline-block;margin:2px 0 6px;padding:4px 9px;border-radius:999px;background:color-mix(in srgb,var(--warn) 18%,transparent);color:var(--warn);font-size:13px;font-weight:700}
 .sheet p{margin:6px 0;color:var(--sub);font-size:15px}
 .sheet p.t{color:var(--text)}
 .field{display:block;width:100%;margin-top:10px;padding:13px 15px;border-radius:14px;border:0;background:var(--card);font:inherit;font-size:16px;color:var(--text)}
@@ -444,12 +445,11 @@ pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-h
     var Lc=$('#cards');Lc.textContent='';
     var c=scn(),d=S.device,running=c==='running'||c==='cancelling',armed=Date.now()<armUntil,ready=(c==='idle'||c==='done')&&S.config.configured;
     var enc=d.encrypted===true;
+    var restoreReady=d.connected&&d.conn==='usb'&&d.paired===true&&S.last&&S.last.state==='finished'&&!S.otherJob&&!S.deleting;
     if(view==='main')renderDevbar(Lc,d);
     if(view==='backup'){
       if(running)Lc.appendChild(card({cls:'main danger',icon:'stop',title:c==='cancelling'?L('正在取消…','Cancelling…'):(armed?L('再点一次确认取消','Tap again to confirm'):L(S.job&&S.job.kind==='restore'?'取消恢复':'取消备份',S.job&&S.job.kind==='restore'?'Cancel Restore':'Cancel Backup')),desc:S.job&&S.job.kind==='restore'?L('取消可能让手机重启；请等手机重新启动后再操作。','Cancelling may reboot the device; wait for it to restart before using it.'):L('取消后，上一次完好的备份保持不变。','The last good backup stays untouched.'),go:'stop',fill:true,dis:c==='cancelling',fn:cancelClick}));
       else Lc.appendChild(card({cls:'main',icon:'backup',title:L('开始备份','Start Backup'),desc:c==='offline'||c==='unpaired'?L('先连接并配对手机。','Connect and pair the device first.'):(!S.config.configured?L('先选择备份位置。','Choose a backup location first.'):L('把手机备份到 NAS。','Back up this device to your NAS.')),go:'play',fill:true,dis:c==='offline'||c==='unpaired'||!!S.otherJob,fn:startBackup}));
-      var restoreReady=d.connected&&d.conn==='usb'&&d.paired===true&&S.last&&S.last.state==='finished'&&!S.otherJob&&!S.deleting;
-      Lc.appendChild(card({icon:'refresh',title:L('从 NAS 恢复到此手机','Restore from NAS to This Device'),desc:restoreReady?L('实验功能：已在 iPhone 15（iOS 27.0）实测，欢迎测试并反馈。','Experimental: tested on iPhone 15 (iOS 27.0); community testing is welcome.'):L('需要 USB 连接、已配对且有完整备份。','Requires USB, pairing, and a complete backup.'),dis:!restoreReady||running,fn:openRestore}));
       Lc.appendChild(card({icon:'lock',title:L('加密备份','Encrypted Backup'),desc:enc?L('已开启。密码保存在手机里，以后每次备份自动使用。','On. The password lives on the device and is used for every backup.'):(d.encrypted===false?L('未开启。开启后备份会包含健康数据和已保存的密码。','Off. Turn on to include Health data and saved passwords.'):L('暂时读不到加密状态。','Encryption status is unavailable right now.')),more:'enc',dis:running||c==='offline'||c==='unpaired',fn:openEnc}));
       Lc.appendChild(card({icon:'folder',title:L('备份位置','Backup Location'),desc:(S.config.dir||L('尚未选择','Not chosen yet'))+(S.storage.free!=null?L('，可用 ',', ')+fmtBytes(S.storage.free)+L('',' free'):''),more:'where',dis:running||!d.connected,fn:openFolder}));
       var hasBk=(S.storage&&S.storage.dir>0)||(S.last&&S.last.ts);
@@ -461,6 +461,7 @@ pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-h
       if(c==='offline')Lc.appendChild(card({cls:'main',icon:'refresh',title:L('检测连接','Check Connection'),desc:L('重新查找手机，必要时自动重新连接。','Look for the device again and reconnect if needed.'),go:'refresh',fn:probe}));
       if(c==='unpaired')Lc.appendChild(card({cls:'main',icon:'wifi',title:L('去配对','Pair Now'),desc:L('用 USB 线连接，在手机上点“信任”并输入锁屏密码。','Connect with USB, tap Trust on the device and enter its passcode.'),fn:openConn}));
       Lc.appendChild(card({cls:'main',icon:'backup',title:L('立即备份','Back Up Now'),desc:running&&S.job?L('备份中 '+Math.floor(S.job.pct)+'%，点进去查看','Backing up '+Math.floor(S.job.pct)+'%, tap to view'):L('开始备份，并设置加密和备份位置。','Start a backup, and set encryption and location.'),more:'backup',go:running?'chev':'play',fill:!running,dis:c==='offline'||c==='unpaired',fn:function(){go('backup')}}));
+      Lc.appendChild(card({icon:'refresh',title:L('从 NAS 恢复到此手机（实验功能）','Restore from NAS to This Device (Experimental)'),desc:restoreReady?L('已在 iPhone 15（iOS 27.0）实测，欢迎测试并反馈。','Tested on iPhone 15 (iOS 27.0); community testing is welcome.'):L('需要 USB 连接、已配对且有完整备份。','Requires USB, pairing, and a complete backup.'),dis:!restoreReady||running,fn:openRestore}));
       var sc=S.schedule;
       Lc.appendChild(card({icon:'clock',title:L('定时备份','Scheduled Backup'),desc:sc.enabled?L('每天 '+sc.time+(sc.nextStr?'，下一次 '+sc.nextStr:''),'Daily at '+sc.time+(sc.nextStr?', next '+sc.nextStr:'')):L('未开启。由 NAS 在设定时间主动连接手机。','Off. The NAS connects to the device at the set time.'),more:'sched',dis:!d.connected,fn:openSched}));
       Lc.appendChild(card({icon:'wifi',title:L('连接与配对','Connection & Pairing'),desc:c==='offline'?L('未连接','Not connected'):(d.paired?(d.conn==='usb'?L('USB，已信任','USB, trusted'):L('无线，已信任','Wi-Fi, trusted')):L('未配对','Not paired')),more:'conn',fn:openConn}));
@@ -615,6 +616,7 @@ pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-h
     if(!S||S.job||S.deleting)return;
     var d=S.device,last=S.last,udid=d.udid||'',encrypted=!!(last&&last.encrypted);
     sheet(L('从 NAS 恢复备份','Restore from NAS'),function(sh){
+      sh.appendChild(h('span','experiment-badge',L('实验功能','Experimental')));
       var p=h('p','t');p.textContent=L('实验功能：已在 iPhone 15（iOS 27.0）上实测。欢迎测试其他设备和系统版本，并反馈机型、iOS 版本及恢复结果。恢复期间请保持 USB 连接。','Experimental: tested on iPhone 15 (iOS 27.0). Community testing is welcome; please report your device model, iOS version, and restore result. Keep the cable connected during restore.');sh.appendChild(p);
       sh.appendChild(h('p',null,L('请先在手机上关闭“查找我的 iPhone”。备份必须来自相同设备，且目标 iOS 版本不能低于备份版本。','Turn off Find My iPhone first. The backup must belong to this device, and its iOS version cannot be newer than the target device’s.')));
       if(encrypted){var pw=h('input','field');pw.type='password';pw.autocomplete='current-password';pw.placeholder=L('备份密码','Backup password');pw.setAttribute('aria-label',pw.placeholder);sh.appendChild(pw)}

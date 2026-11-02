@@ -139,6 +139,9 @@ class UI(unittest.TestCase):
             expect(p.locator("#healthCard")).to_be_visible(); expect(p.locator("#hcT")).to_contain_text("环境自检")
             for tab, pane in (("备份记录", "p-bak"), ("定时备份", "p-sch"), ("连接与配对", "p-con"), ("运行日志", "p-log"), ("摘要", "p-sum")):
                 p.locator(".side button", has_text=tab).click(); expect(p.locator("#" + pane)).to_be_visible()
+                if pane == "p-bak":
+                    expect(p.locator("#restoreFromNas")).to_have_count(0)
+                    expect(p.locator("#p-bak h3")).to_have_text("电脑端恢复说明")
             # no folder yet: the picker opens, the suggestion creates and selects the folder
             p.locator("#goBackup").click(); expect(p.locator("#dlg")).to_be_visible(); expect(p.locator("#dBox h2")).to_have_text("选择备份文件夹")
             p.locator(".sugg").get_by_role("button", name="使用推荐位置").click()
@@ -179,6 +182,9 @@ class UI(unittest.TestCase):
             expect(p.locator("#dErr")).to_contain_text("正在向手机设置"); expect(p.locator("#dErr")).to_contain_text("password", timeout=20000)   # the phone's answer replaces the waiting text
             p.keyboard.press("Escape"); expect(p.locator("#dlg")).to_be_hidden()
             expect(p.locator("#encChk")).to_be_checked()
+            p.locator("#goRestore").click(); expect(p.locator("#dBox h2")).to_have_text("从 NAS 恢复备份")
+            expect(p.locator("#dBox .pill.warn")).to_have_text("实验功能")
+            p.keyboard.press("Escape"); expect(p.locator("#dlg")).to_be_hidden()
 
     # ------------------------------------------------------------------ phone
     def test_05_phone_everything(self):
@@ -189,10 +195,11 @@ class UI(unittest.TestCase):
             p = self.page(c)
             expect(p.locator("h1.ttl")).to_have_text("Air", timeout=15000); expect(p.locator(".desc")).to_contain_text(re.compile("已连接，正在待命|备份完成"))   # "done" shows for 90 s after a backup
             titles = p.locator("#cards .acard b").all_inner_texts()
-            self.assertEqual([t for t in titles if t != "环境自检"], ["立即备份", "定时备份", "连接与配对", "运行日志"])
+            self.assertEqual([t for t in titles if t != "环境自检"], ["立即备份", "从 NAS 恢复到此手机（实验功能）", "定时备份", "连接与配对", "运行日志"])
             p.locator("#cards .acard", has_text="立即备份").first.click()
             expect(p.locator("h1.ttl")).to_have_text("立即备份")
             self.assertEqual(p.locator("#cards .acard b").all_inner_texts(), ["开始备份", "加密备份", "备份位置", "删除备份"])
+            expect(p.locator("#cards .acard", has_text="从 NAS 恢复到此手机")).to_have_count(0)
             expect(p.get_by_text("备份记录", exact=True)).to_be_visible()                  # the history sits under the cards
             self.srv.phone(backup_seconds=40.0)
             p.locator("#cards .acard", has_text="开始备份").click()
@@ -218,6 +225,9 @@ class UI(unittest.TestCase):
             expect(p.locator("#sheet")).to_contain_text("存储空间 1")           # the picker starts at the list of shared volumes
             p.get_by_role("button", name=re.compile("存储空间 1")).click(); expect(p.get_by_role("button", name=re.compile("上一级"))).to_be_visible(); p.get_by_role("button", name="完成").click()
             p.get_by_role("button", name="返回").click(); expect(p.locator("h1.ttl")).to_have_text("Air")
+            p.locator("#cards .acard", has_text="从 NAS 恢复到此手机").click(); expect(p.locator("#shT")).to_have_text("从 NAS 恢复备份")
+            expect(p.locator("#sheet .experiment-badge")).to_have_text("实验功能")
+            p.get_by_role("button", name="完成").click()
             p.locator("#cards .acard", has_text="定时备份").locator(".go").click(); expect(p.locator("#shT")).to_have_text("定时备份")
             p.locator("#sheet input[type=time]").fill("22:10"); p.locator("#sheet .days button").nth(6).click(); p.get_by_role("button", name="保存").click()
             expect(p.locator(".toast")).to_have_text("已保存")
