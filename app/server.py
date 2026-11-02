@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import math
 import os
 import plistlib
 import re
@@ -15,6 +16,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.cookies import SimpleCookie
@@ -49,13 +51,14 @@ LOG = collections.deque(maxlen=500)
 lock = threading.RLock()          # guards DEV, JOB, RESULT, HISTORY, DIRSIZE, BACKUP_DIR
 busy = threading.Lock()           # one backup / encryption change at a time
 
-CONF = {"dirs": {}, "schedules": {}, "selected": None}  # dirs: UDID -> backup folder; schedules: UDID -> schedule; selected: the device chosen in the UI
+CONF = {"dirs": {}, "schedules": {}, "selected": None, "devices": {}, "forgotten": []}
+# dirs: UDID -> backup folder; schedules: UDID -> schedule; selected: the device the UI works with;
+# devices: UDID -> {"name", "ptype"} of every device seen; forgotten: UDIDs the user removed from that list
 AUTH = {}                         # salt, hash, hint, secret for the web password
 FAILS = {}                        # client ip -> {"n": failed attempts, "until": lock timestamp}
 DEV = {"udid": None, "conn": None, "paired": None, "name": None, "product": None,
        "version": None, "capacity": None, "free": None, "encrypted": None,
        "wifiSync": None, "ptype": None, "usbIds": [], "netIds": []}
-KNOWN = {}                        # UDID -> {"name", "ptype"} of every device seen, for the device list
 JOB = None
 RESULT = None
 HISTORY = []
@@ -127,8 +130,11 @@ def load_config():
         CONF["schedules"] = {k: v for k, v in data.get("schedules", {}).items() if isinstance(v, dict)}
         sel = data.get("selected")
         CONF["selected"] = sel if isinstance(sel, str) else None
+        CONF["devices"] = {k: {"name": str(v.get("name") or ""), "ptype": str(v.get("ptype") or "")}
+                           for k, v in data.get("devices", {}).items() if isinstance(v, dict)}
+        CONF["forgotten"] = [u for u in data.get("forgotten", []) if isinstance(u, str)]
     except Exception:
-        CONF["dirs"], CONF["schedules"], CONF["selected"] = {}, {}, None
+        CONF["dirs"], CONF["schedules"], CONF["selected"], CONF["devices"], CONF["forgotten"] = {}, {}, None, {}, []
 
 
 def save_config():
@@ -136,7 +142,7 @@ def save_config():
         os.makedirs(STATE_DIR, exist_ok=True)
         tmp = CONF_FILE + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"dirs": CONF["dirs"], "schedules": CONF["schedules"], "selected": CONF["selected"]}, f)
+            json.dump({k: CONF[k] for k in ("dirs", "schedules", "selected", "devices", "forgotten")}, f)
         os.replace(tmp, CONF_FILE)
     except Exception as e:
         log("cannot save settings: %r" % e)
@@ -221,9 +227,11 @@ def list_ids(network):
 
 
 def pick_device(usb, net, selected):
-    """Which device the UI works with: the one the user chose if it is still visible, otherwise USB first, then Wi-Fi."""
-    seen = list(dict.fromkeys(list(usb) + list(net)))
-    udid = selected if selected in seen else (usb[0] if usb else (net[0] if net else None))
+    """Which device the UI works with. A chosen device stays chosen even while it is offline (conn is then None), so a
+    device that drops off the network is never replaced by whichever other one happens to be connected."""
+    if selected:
+        return selected, ("usb" if selected in usb else ("wifi" if selected in net else None))
+    udid = usb[0] if usb else (net[0] if net else None)
     return udid, (None if not udid else ("usb" if udid in usb else "wifi"))
 
 
@@ -260,28 +268,116 @@ def refresh_info(udid, network):
             wifiSync=bool(wl.get("EnableWifiConnections")),
         )
     with lock:
-        DEV.update(info)
+        if DEV["udid"] == udid:
+            DEV.update(info)
+
+
+OTHER = {}                        # UDID -> {"paired", "wifiSync", "version", "ts"} of online devices that are not selected
+
+
+def refresh_other(udid, network):
+    """Pairing and Wi-Fi sync state of a device that is not selected, so that its card on the connection page is current."""
+    rc, _ = run(["idevicepair", "-u", udid, "validate"] + (["-n"] if network else []), timeout=10)
+    info = {"paired": rc == 0, "wifiSync": None, "version": None, "ts": time.time()}
+    if rc == 0:
+        base = query(udid, network) or {}
+        wl = query(udid, network, "com.apple.mobile.wireless_lockdown") or {}
+        info.update(wifiSync=bool(wl.get("EnableWifiConnections")), version=base.get("ProductVersion"))
+        remember(udid, base.get("DeviceName"), base.get("ProductType"))
+    with lock:
+        OTHER[udid] = info
+
+
+def backup_identity(udid):
+    """Name and model of a device that is offline and was never seen since the service started: the backup folder knows."""
+    base = backup_dir(udid)
+    if not base:
+        return None, None
+    try:
+        with open(os.path.join(base, udid, "Info.plist"), "rb") as f:
+            info = plistlib.load(f)
+    except Exception:
+        return None, None
+    return info.get("Device Name"), info.get("Product Type")
+
+
+def known_udid(udid):
+    with lock:
+        return bool(udid) and (udid in CONF["devices"] or udid in visible_ids() or udid == DEV["udid"])
+
+
+def remember(udid, name, ptype):
+    """Keep the name and model of a device, so the switcher can list it while it is offline."""
+    if not udid or not name:
+        return
+    with lock:
+        cur = CONF["devices"].get(udid)
+        new = {"name": name, "ptype": ptype or (cur or {}).get("ptype") or ""}
+        if cur != new:
+            CONF["devices"][udid] = new
+            save_config()
 
 
 def learn_device(udid, network):
     """Read just the name and model of a device, so that it can be listed in the device switcher."""
     base = query(udid, network) or {}
-    if base.get("DeviceName"):
-        with lock:
-            KNOWN[udid] = {"name": base.get("DeviceName"), "ptype": base.get("ProductType")}
+    remember(udid, base.get("DeviceName"), base.get("ProductType"))
+
+
+LOCKDOWN_DIR = os.environ.get("IBS_LOCKDOWN_DIR", "/var/lib/lockdown")
+
+
+def seed_devices():
+    """Devices that were paired before (pairing records are named after the UDID) are listed even before they show up."""
+    try:
+        names = os.listdir(LOCKDOWN_DIR)
+    except OSError:
+        return
+    with lock:
+        for n in names:
+            u = n[:-6] if n.endswith(".plist") else ""
+            if u and UDID_RE.fullmatch(u) and u not in CONF["devices"] and u not in CONF["forgotten"]:
+                CONF["devices"][u] = {"name": "", "ptype": ""}
+        save_config()
+
+
+def visible_ids():
+    with lock:
+        return list(dict.fromkeys(list(DEV["usbIds"]) + list(DEV["netIds"])))
 
 
 def select_device(udid):
+    """Choose the device the page works with. It also works for a device that is offline; the choice stays."""
     with lock:
-        visible = list(dict.fromkeys(list(DEV["usbIds"]) + list(DEV["netIds"])))
-        if JOB is not None or DELETING is not None or busy.locked():
-            return 409, {"error": "有任务在运行，稍后再切换设备"}
-        if udid not in visible:
-            return 404, {"error": "这台设备现在不在线"}
+        if udid not in CONF["devices"] and udid not in visible_ids():
+            return 404, {"error": "不认识这台设备"}
         CONF["selected"] = udid
         save_config()
     MDNS_EVENT.set()                   # wake the poller so that the page follows quickly
     log("device selected: %s" % udid)
+    return 200, {"ok": True}
+
+
+def forget_device(udid):
+    """Remove a device from the list, with its folder and schedule settings. Backup files are never touched."""
+    with lock:
+        if udid in visible_ids():
+            return 409, {"error": "这台设备现在在线，请先断开连接再忘记"}
+        if JOB is not None and JOB.get("udid") == udid:
+            return 409, {"error": "这台设备正在备份"}
+        if udid not in CONF["devices"] and CONF["selected"] != udid:
+            return 404, {"error": "不认识这台设备"}
+        CONF["devices"].pop(udid, None)
+        CONF["dirs"].pop(udid, None)
+        CONF["schedules"].pop(udid, None)
+        if udid not in CONF["forgotten"]:
+            CONF["forgotten"].append(udid)
+        if CONF["selected"] == udid:
+            CONF["selected"] = None
+        DIRSIZE.pop(udid, None)
+        save_config()
+    MDNS_EVENT.set()
+    log("device forgotten: %s" % udid)
     return 200, {"ok": True}
 
 
@@ -313,9 +409,44 @@ def mdns_phone_ips():
     return sorted(set(MDNS.values()))
 
 
-def restart_usbmuxd(why):
-    log("%s; restarting usbmuxd2" % why)
-    run(["pkill", "-x", "usbmuxd"])
+_last_mux_restart = 0.0
+
+
+def restart_usbmuxd(why, min_interval=15.0):
+    global _last_mux_restart
+    # Own the same exclusion lock as jobs: a check of JOB alone races a new restore.
+    if not busy.acquire(blocking=False):
+        return False
+    try:
+        if JOB is not None or time.monotonic() - _last_mux_restart < min_interval:
+            return False
+        _last_mux_restart = time.monotonic()
+        log("%s; restarting usbmuxd2" % why)
+        _, output = run(["pgrep", "-x", "usbmuxd"])
+        pids = [int(pid) for pid in output.split() if pid.isdigit()]
+        # Keep pidfds open so escalation cannot signal a reused PID or the replacement daemon.
+        handles = []
+        try:
+            for pid in pids:
+                try:
+                    handles.append(os.pidfd_open(pid))
+                except ProcessLookupError:
+                    pass
+            run(["pkill", "-x", "usbmuxd"])
+            deadline = time.monotonic() + 3
+            for handle in handles:
+                if not select.select([handle], [], [], max(0, deadline - time.monotonic()))[0]:
+                    log("usbmuxd2 did not exit after cancellation; terminating the stuck daemon")
+                    try:
+                        signal.pidfd_send_signal(handle, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+        finally:
+            for handle in handles:
+                os.close(handle)
+        return True
+    finally:
+        busy.release()
 
 
 def tcp_open(ip, port=62078, timeout=2.0):
@@ -326,8 +457,9 @@ def tcp_open(ip, port=62078, timeout=2.0):
         return False
 
 
-def apple_usb_present():
-    """True if an iPhone, iPad or iPod is on the USB bus. Read from sysfs, so it works even when usbmuxd2 is blind."""
+def apple_usb_count():
+    """How many iPhones, iPads and iPods are on the USB bus. Read from sysfs, so it works even when usbmuxd2 is blind."""
+    n = 0
     try:
         for name in os.listdir("/sys/bus/usb/devices"):
             base = "/sys/bus/usb/devices/" + name
@@ -339,10 +471,14 @@ def apple_usb_present():
             except OSError:
                 continue
             if vendor == "05ac" and re.match(r"(iPhone|iPad|iPod)", product):
-                return True
+                n += 1
     except OSError:
         pass
-    return False
+    return n
+
+
+def apple_usb_present():
+    return apple_usb_count() > 0
 
 
 def restart_cooldown(times, now, base):
@@ -373,7 +509,7 @@ def watchdog_step(missing_since, now, ips, last_restart, unplugged_at, cooldown_
     if missing_since is None:
         return False, now
     wait = 1.0 if (unplugged_at is not None and now - unplugged_at < 20) else 8.0
-    cooldown = cooldown_scale if cooldown_scale is not None else (8.0 if wait < 8.0 else 30.0)
+    cooldown = cooldown_scale if cooldown_scale is not None else (8.0 if wait < 8.0 else 15.0)
     if now - missing_since > wait and now - last_restart > cooldown:
         return True, None
     return False, missing_since
@@ -383,6 +519,7 @@ def poller():
     last_info = 0.0
     last_udid = None          # the last device that was selected, to tell "another device" from "the same one back"
     last_others = 0.0         # when the names of the devices that are not selected were last read
+    tried = {}                # UDID -> when its name was last tried
     missing_since = None      # phone reachable on the LAN but not listed by usbmuxd2
     last_restart = 0.0
     unplugged_at = None       # when the USB cable was last pulled
@@ -393,6 +530,13 @@ def poller():
         try:
             usb, net = list_ids(False), list_ids(True)
             with lock:
+                if CONF["selected"] is None and (usb or net):       # the first device that shows up is pinned
+                    CONF["selected"] = (usb or net)[0]
+                    save_config()
+                for u in usb + net:                                  # a device that is seen again is no longer "forgotten"
+                    if u in CONF["forgotten"]:
+                        CONF["forgotten"].remove(u)
+                        save_config()
                 udid, conn = pick_device(usb, net, CONF["selected"])
                 changed = (udid, conn) != (DEV["udid"], DEV["conn"])
                 if DEV["conn"] == "usb" and conn != "usb":
@@ -411,27 +555,39 @@ def poller():
             with lock:
                 paired_now = DEV["paired"]
             # every 30 s normally, every 5 s while unpaired so that tapping "Trust" on the phone shows up quickly
-            if udid and not running and (changed or time.time() - last_info > (30 if paired_now else 5)):
+            if conn and not running and (changed or time.time() - last_info > (30 if paired_now else 5)):
                 refresh_info(udid, conn == "wifi")
                 last_info = time.time()
-            if not udid:
+                with lock:
+                    remember(udid, DEV["name"], DEV["ptype"])
+            if not conn:
                 with lock:
                     DEV["paired"] = None
-            if not running and time.time() - last_others > 60:
-                last_others = time.time()
+            with lock:
+                for gone in [u for u in OTHER if u not in usb and u not in net]:
+                    OTHER.pop(gone, None)                 # an offline device has no pairing state to show
+            if not running:
+                due = time.time() - last_others > 60
                 for other in dict.fromkeys(usb + net):
-                    if other != udid:
-                        learn_device(other, other in net and other not in usb)
+                    # a device without a name yet is tried again every 10 s, the others are refreshed once a minute
+                    unnamed = (not CONF["devices"].get(other, {}).get("name") or other not in OTHER) and time.time() - tried.get(other, 0) > 10
+                    if other != udid and (due or unnamed):
+                        tried[other] = time.time()
+                        refresh_other(other, other in net and other not in usb)
+                if due:
+                    last_others = time.time()
             blind = (not usb) and (not running) and apple_usb_present()
             go_usb, usb_blind_since = usb_watchdog_step(usb_blind_since, time.time(), blind, last_usb_restart,
                                                         restart_cooldown(restart_times, time.time(), 10.0))
             if go_usb:
-                restart_usbmuxd("an iPhone/iPad is plugged in over USB but usbmuxd2 does not see it")
-                last_usb_restart = time.time()
-                restart_times.append(last_usb_restart)
+                if restart_usbmuxd("an iPhone/iPad is plugged in over USB but usbmuxd2 does not see it"):
+                    last_usb_restart = time.time()
+                    restart_times.append(last_usb_restart)
             # Watchdog: usbmuxd2 only re-adds a Wi-Fi device when avahi announces it as *new*. After the
             # phone switches band / network it can stay unlisted although it is reachable. Restart usbmuxd2.
-            if not udid and not running:
+            # The stock usbmuxd only handles USB. A Wi-Fi-reachable phone that it cannot list is
+            # expected in this mode; restarting usbmuxd in response just creates a restart loop.
+            if os.environ.get("USBMUXD_IMPLEMENTATION", "usbmuxd2") != "stock" and not (usb or net) and not running:
                 ips = [ip for ip in mdns_phone_ips() if tcp_open(ip)]
                 now = time.time()
                 quick = unplugged_at is not None and now - unplugged_at < 20
@@ -439,9 +595,10 @@ def poller():
                 go, missing_since = watchdog_step(missing_since, now, ips, last_restart, unplugged_at,
                                                   restart_cooldown(restart_times, now, base_cd))
                 if go:
-                    restart_usbmuxd("phone is reachable at %s but usbmuxd2 does not list it%s" % (ips[0], " (USB cable was pulled)" if unplugged_at and now - unplugged_at < 20 else ""))
-                    last_restart = now
-                    restart_times.append(now)
+                    quick = unplugged_at is not None and now - unplugged_at < 20
+                    if restart_usbmuxd("phone is reachable at %s but usbmuxd2 does not list it%s" % (ips[0], " (USB cable was pulled)" if quick else ""), min_interval=3.0 if quick else 15.0):
+                        last_restart = now
+                        restart_times.append(now)
             else:
                 missing_since = None
         except Exception as e:  # keep the poller alive
@@ -461,8 +618,10 @@ def read_last(udid):
             st = plistlib.load(f)
     except Exception:
         return None
+    if not isinstance(st, dict):
+        return None
     date = st.get("Date")
-    ts = calendar.timegm(date.utctimetuple()) if date else None
+    ts = calendar.timegm(date.utctimetuple()) if isinstance(date, datetime.datetime) else None
     enc = None
     try:
         with open(os.path.join(d, "Manifest.plist"), "rb") as f:
@@ -513,10 +672,24 @@ def save_history():
 
 
 # ---------------------------------------------------------------- backup job
-def start_backup(source="manual"):
+def device_state(udid):
+    """What start_backup needs to know about a device: where it is connected and whether it is paired."""
     with lock:
         d = dict(DEV)
-    if not d["udid"]:
+    if udid is None or udid == d["udid"]:
+        return d
+    usb, net = list_ids(False), list_ids(True)
+    conn = "usb" if udid in usb else ("wifi" if udid in net else None)
+    paired = None
+    if conn:
+        rc, _ = run(["idevicepair", "-u", udid, "validate"] + (["-n"] if conn == "wifi" else []), timeout=10)
+        paired = rc == 0
+    return dict(d, udid=udid, conn=conn, paired=paired)
+
+
+def start_backup(source="manual", udid=None):
+    d = device_state(udid)
+    if not d["udid"] or not d["conn"]:
         return 409, {"error": "未检测到设备"}
     if not d["paired"]:
         return 409, {"error": "尚未配对"}
@@ -531,6 +704,284 @@ def start_backup(source="manual"):
         global_reset_job()
         log("could not start the backup: %r" % e)
         return 500, {"error": "无法开始备份：%s" % e.__class__.__name__}
+
+
+def restore_preflight(udid, base):
+    """Check the selected device backup without modifying either the phone or backup."""
+    folder = os.path.join(base, udid)
+    try:
+        with open(os.path.join(folder, "Info.plist"), "rb") as f:
+            info = plistlib.load(f)
+        with open(os.path.join(folder, "Status.plist"), "rb") as f:
+            status = plistlib.load(f)
+        with open(os.path.join(folder, "Manifest.plist"), "rb") as f:
+            manifest = plistlib.load(f)
+    except (OSError, plistlib.InvalidFileException, ValueError):
+        return None, "找不到可读取的完整备份"
+    if not all(isinstance(x, dict) for x in (info, status, manifest)):
+        return None, "备份信息格式无效"
+    if info.get("Unique Identifier") != udid:
+        return None, "备份中的设备标识与所选设备不匹配"
+    if status.get("SnapshotState") != "finished":
+        return None, "备份没有成功完成，不能恢复"
+    source_version = str(info.get("Product Version") or "")
+    try:
+        target_version = str(DEV.get("version") or "")
+        def version_key(value):
+            parts = tuple(int(x) for x in re.findall(r"\d+", value))
+            return (parts + (0, 0, 0, 0))[:4]
+        if not source_version or not target_version:
+            return None, "目标或备份的 iOS 版本不可读取，无法确认兼容性"
+        source_parts = version_key(source_version)
+        target_parts = version_key(target_version)
+        if target_parts < source_parts:
+            return None, "备份来自更高版本的 iOS，不能恢复到当前较低版本"
+    except (TypeError, ValueError):
+        pass
+    return {"encrypted": bool(manifest.get("IsEncrypted")), "sourceVersion": source_version,
+            "name": str(info.get("Device Name") or "iPhone")}, None
+
+
+def start_restore(data):
+    """Start a deliberately explicit, USB-only full device restore."""
+    with lock:
+        d = dict(DEV)
+    udid = d.get("udid")
+    if not udid or udid not in list_ids(False) or d.get("conn") != "usb":
+        return 409, {"error": "恢复必须通过 USB 连接目标手机"}
+    if not d.get("paired"):
+        return 409, {"error": "手机尚未配对，请先完成配对"}
+    if str(data.get("confirm") or "") != udid:
+        return 400, {"error": "请输入完整 UDID 确认目标手机"}
+    if data.get("findMyDisabled") is not True:
+        return 400, {"error": "请先在手机上关闭“查找我的 iPhone”并确认"}
+    base = backup_dir(udid)
+    if not base:
+        return 409, {"error": "这台设备没有配置 NAS 备份位置"}
+    meta, error = restore_preflight(udid, base)
+    if error:
+        return 409, {"error": error}
+    password = str(data.get("password") or "")
+    if meta["encrypted"] and not password:
+        return 400, {"error": "这是加密备份，请输入备份密码"}
+    if len(password) > 200:
+        return 400, {"error": "备份密码过长"}
+    if not busy.acquire(blocking=False):
+        return 409, {"error": "已有任务在运行"}
+    try:
+        _launch_restore(d, base, password, meta)
+        return 200, {"ok": True}
+    except Exception as e:
+        global_reset_job()
+        log("could not start restore: %r" % e)
+        return 500, {"error": "无法开始恢复：%s" % e.__class__.__name__}
+
+
+def _launch_restore(d, base, password, meta):
+    global JOB
+    udid = d["udid"]
+    diagnostic_dir = os.path.join(STATE_DIR, "restore-logs")
+    os.makedirs(diagnostic_dir, mode=0o700, exist_ok=True)
+    diagnostic = os.path.join(diagnostic_dir, "%d-%s.jsonl" % (time.time(), secrets.token_hex(8)))
+    python = os.environ.get("RESTORE_PYTHON") or (
+        "/opt/restore/bin/python" if os.path.isfile("/opt/restore/bin/python") else sys.executable)
+    argv = [python, "-u", os.path.join(os.path.dirname(__file__), "restore_worker.py"),
+            "--udid", udid, "--backup-root", base, "--diagnostic", diagnostic]
+    with lock:
+        JOB = {"kind": "restore", "udid": udid, "pct": 0.0, "msg": "", "status": "准备恢复",
+               "file": "", "bytes": None, "started": time.time(), "way": "usb", "cancel": False,
+               "proc": None, "samples": collections.deque(maxlen=1000), "eta": None,
+               "first_pct_at": None, "source": "manual", "reason": None,
+               "lastActivity": time.time(), "encrypted": meta["encrypted"], "deviceName": meta["name"],
+               "diagnostic": os.path.basename(diagnostic), "restoreOutcome": None,
+               "protocolComplete": False, "transferSamples": collections.deque(maxlen=40),
+               "restoreSamples": collections.deque(maxlen=1000), "totalEta": None,
+               "lastRestoreSample": 0.0}
+    threading.Thread(target=run_restore, args=(argv, udid, base, password), daemon=True).start()
+
+
+def confirm_restore_success(udid, ts):
+    """Mark one completed transfer successful only after the user confirms iOS started."""
+    global RESULT
+    try:
+        target_ts = int(ts)
+    except (TypeError, ValueError):
+        return 400, {"error": "恢复记录无效"}
+    with lock:
+        entry = next((h for h in reversed(HISTORY)
+                      if h.get("kind") == "restore" and h.get("udid") == udid
+                      and h.get("ts") == target_ts and h.get("status") == "awaiting_device"), None)
+        if entry is None:
+            return 404, {"error": "没有待确认的恢复记录"}
+        entry.update(status="ok", error=None, confirmed=True, confirmedAt=int(time.time()))
+        if (RESULT and RESULT.get("kind") == "restore" and RESULT.get("udid") == udid
+                and RESULT.get("ts") == target_ts and RESULT.get("status") == "awaiting_device"):
+            RESULT.update(status="ok", error=None, confirmed=True)
+        save_history()
+    log("restore confirmed successful for %s" % udid)
+    return 200, {"ok": True}
+
+
+def update_restore_eta(job, now=None):
+    """Estimate remaining and total restore time from phone-reported overall progress."""
+    now = time.time() if now is None else now
+    pct = job.get("pct", 0)
+    samples = job.get("restoreSamples")
+    if samples is None or not isinstance(pct, (int, float)) or not 0 < pct < 100:
+        return
+    if now - job.get("lastRestoreSample", 0) >= 1:
+        if not samples or pct > samples[-1][1]:
+            samples.append((now, float(pct)))
+        job["lastRestoreSample"] = now
+    while len(samples) > 2 and now - samples[0][0] > 900:
+        samples.popleft()
+    if len(samples) < 2:
+        return
+
+    oldest = samples[0]
+    elapsed_sample = now - oldest[0]
+    progress_delta = pct - oldest[1]
+    if elapsed_sample < 60 or progress_delta < 0.25:
+        return
+    rate = progress_delta / elapsed_sample
+    if rate <= 0:
+        return
+    eta = (100 - pct) / rate
+    if not math.isfinite(eta) or eta < 0:
+        return
+    previous = job.get("eta")
+    job["eta"] = eta if previous is None else 0.7 * previous + 0.3 * eta
+    job["totalEta"] = max(0, now - job.get("started", now)) + job["eta"]
+
+
+def handle_restore_event(job, line):
+    """Only structured worker events can advance a restore; stdout text is not success."""
+    event = json.loads(line)
+    kind = event.get("event")
+    if kind in ("phase", "transfer", "batch_sent", "progress", "protocol", "protocol_complete", "completed", "error"):
+        job["lastActivity"] = time.time()
+    if kind == "phase":
+        job["status"] = str(event.get("status") or "正在恢复")[:300]
+        log("restore: " + job["status"])
+    elif kind in ("transfer", "batch_sent"):
+        count = event.get("bytes")
+        if not isinstance(count, int) or isinstance(count, bool) or count < (job.get("bytes") or 0):
+            raise ValueError("invalid restore byte count")
+        job.update(bytes=count, file=str(event.get("file") or "")[-120:], status="正在发送恢复数据")
+        now = time.time()
+        if count > job.get("lastTransferBytes", 0):
+            job["lastTransfer"] = now
+            job["lastTransferBytes"] = count
+        samples = job["transferSamples"]
+        samples.append((now, count))
+        while len(samples) > 2 and now - samples[0][0] > 30:
+            samples.popleft()
+        elapsed = now - samples[0][0]
+        job["speed"] = (count - samples[0][1]) / elapsed if elapsed >= 4 else None
+    elif kind == "waiting":
+        job["status"] = "等待手机处理或请求下一批文件"
+        job["speed"] = None
+    elif kind == "device_activity":
+        job["lastDeviceActivity"] = time.time()
+    elif kind == "progress":
+        pct = event.get("pct")
+        if isinstance(pct, (int, float)) and 0 <= pct <= 99:
+            job["pct"] = max(job["pct"], pct)
+            update_restore_eta(job)
+    elif kind == "protocol_complete":
+        job.update(protocolComplete=True, status="数据传输完成，等待手机处理", pct=99)
+    elif kind == "completed":
+        if job.get("protocolComplete") and event.get("status") == "awaiting_device":
+            job["restoreOutcome"] = "awaiting_device"
+            job["msg"] = str(event.get("message") or "请等待手机完成重启并检查数据。")[:500]
+    elif kind == "error":
+        job["restoreError"] = str(event.get("message") or "恢复模块失败")[:1200]
+        log("restore error: " + job["restoreError"])
+
+
+def run_restore(argv, udid, base, password):
+    global JOB, RESULT
+    job = JOB
+    log("restore start for %s over USB" % udid)
+    tail = collections.deque(maxlen=8)
+    proc = None
+    rc = -1
+    try:
+        env = dict(os.environ)
+        env.pop("BACKUP_PASSWORD", None)
+        env.pop("BACKUP_PASSWORD_NEW", None)
+        proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, env=env)
+        job["proc"] = proc
+        proc.stdin.write((json.dumps({"password": password}) + "\n").encode("utf-8"))
+        proc.stdin.close()
+        del env, password
+        buf = b""
+        fd = proc.stdout.fileno()
+        while True:
+            ready, _, _ = select.select([fd], [], [], 1.0)
+            if not ready:
+                if proc.poll() is not None:
+                    break
+                continue
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            buf += chunk
+            parts = re.split(rb"[\r\n]+", buf)
+            buf = parts.pop()
+            for part in parts:
+                line = part.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+                try:
+                    handle_restore_event(job, line)
+                except (ValueError, TypeError, AttributeError):
+                    tail.append("恢复模块输出异常，请检查 NAS 运行环境")
+                    job["restoreError"] = "恢复模块输出异常，无法确认恢复结果"
+        rc = proc.wait()
+        if buf.strip():
+            try:
+                handle_restore_event(job, buf.decode("utf-8", "replace"))
+            except (ValueError, TypeError, AttributeError):
+                tail.append("恢复模块输出不完整")
+                job["restoreError"] = "恢复模块输出不完整，无法确认恢复结果"
+    except Exception as e:
+        tail.append(repr(e))
+        log("restore process error: %r" % e)
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=15)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+    finally:
+        if proc is not None and proc.stdout is not None:
+            proc.stdout.close()
+        ended = time.time()
+        cancelled = bool(job and job.get("cancel"))
+        transferred = (rc == 0 and job.get("protocolComplete") and
+                       job.get("restoreOutcome") == "awaiting_device" and not job.get("restoreError"))
+        status = "cancelled" if cancelled else ("awaiting_device" if transferred else "failed")
+        error = (job.get("msg") if transferred else None) if not cancelled else None
+        if status == "failed":
+            error = job.get("restoreError") or " / ".join(list(tail)[-3:]) or ("恢复模块退出，代码 %d" % rc)
+        entry = {"ts": int(ended), "udid": udid, "way": "usb", "duration": int(ended - job["started"]),
+                 "status": status, "source": "manual", "encrypted": job.get("encrypted"), "size": job.get("bytes"),
+                 "dir": to_host(base), "error": error, "diagnostic": job.get("diagnostic")}
+        log("restore %s (rc=%s, %ds)" % (status, rc, entry["duration"]))
+        try:
+            with lock:
+                HISTORY.append(dict(entry, kind="restore"))
+                save_history()
+                RESULT = {"ts": int(ended), "kind": "restore", "udid": udid, "status": status, "error": error}
+        except Exception as e:
+            log("cannot save restore result: %r" % e)
+        with lock:
+            JOB = None
+        if busy.locked():
+            busy.release()
 
 
 def global_reset_job():
@@ -552,12 +1003,13 @@ def _launch_backup(d, base, source):
     net = (not on_usb) and d["conn"] == "wifi"
     if on_usb and d["conn"] != "usb":
         with lock:
-            DEV["conn"] = "usb"
+            if DEV["udid"] == udid:
+                DEV["conn"] = "usb"
         log("USB cable detected, backing up over USB")
     # stdbuf -o0: without it the tool block-buffers stdout when piped and progress never reaches us.
     argv = ["stdbuf", "-o0", "idevicebackup2", "-u", udid] + (["-n"] if net else []) + ["backup", base]
     with lock:
-        JOB = {"kind": "backup", "pct": 0.0, "msg": "", "status": "", "file": "", "bytes": None,
+        JOB = {"kind": "backup", "udid": udid, "pct": 0.0, "msg": "", "status": "", "file": "", "bytes": None,
                "started": time.time(), "way": "wifi" if net else "usb", "cancel": False,
                "proc": None, "samples": collections.deque(maxlen=1000), "eta": None, "first_pct_at": None,
                "source": source, "pass_since": None, "reason": None}
@@ -701,23 +1153,30 @@ def run_backup(argv, udid, base):
     except Exception as e:
         rc = -1
         tail.append(repr(e))
-    ended = time.time()
-    cancelled = job["cancel"]
-    ok = rc == 0 and not cancelled
-    last = read_last(udid)
-    reason = job.get("reason")
-    status = "failed" if reason else ("cancelled" if cancelled else ("ok" if ok else "failed"))
-    entry = {"ts": int(ended), "udid": udid, "way": job["way"], "duration": int(ended - job["started"]),
-             "status": status, "source": job.get("source", "manual"),
-             "encrypted": last["encrypted"] if last else None, "size": None, "dir": to_host(base),
-             "error": reason or (None if ok or cancelled else " / ".join(list(tail)[-3:]))}
-    log("backup %s (rc=%s, %ds)" % (entry["status"], rc, entry["duration"]))
-    with lock:
-        HISTORY.append(entry)
-        save_history()
-        RESULT = {"ts": int(ended), "kind": "backup", "status": entry["status"], "error": entry["error"]}
-        JOB = None
-    busy.release()
+    try:
+        ended = time.time()
+        cancelled = job["cancel"]
+        ok = rc == 0 and not cancelled
+        try:
+            last = read_last(udid)
+        except Exception as e:
+            log("cannot read backup metadata: %r" % e)
+            last = None
+        reason = job.get("reason")
+        status = "failed" if reason else ("cancelled" if cancelled else ("ok" if ok else "failed"))
+        entry = {"ts": int(ended), "udid": udid, "way": job["way"], "duration": int(ended - job["started"]),
+                 "status": status, "source": job.get("source", "manual"),
+                 "encrypted": last["encrypted"] if last else None, "size": None, "dir": to_host(base),
+                 "error": reason or (None if ok or cancelled else " / ".join(list(tail)[-3:]))}
+        log("backup %s (rc=%s, %ds)" % (entry["status"], rc, entry["duration"]))
+        with lock:
+            HISTORY.append(entry)
+            save_history()
+            RESULT = {"ts": int(ended), "kind": "backup", "udid": udid, "status": entry["status"], "error": entry["error"]}
+    finally:
+        with lock:
+            JOB = None
+        busy.release()
     size = refresh_dirsize(udid)                 # keeps the storage bar up to date
     if entry["status"] == "ok":                  # an interrupted or failed run has no "backup size": the folder still holds the previous backup
         with lock:
@@ -750,8 +1209,10 @@ def delete_backup(confirm):
         return 409, {"error": "这个文件夹看起来不是备份，为了安全没有删除"}
     if not busy.acquire(blocking=False):
         return 409, {"error": "正在备份或删除，请稍后再试"}
-    trash = "%s.deleting-%d" % (target, int(time.time()))
+    trash = "%s.deleting-%s" % (target, secrets.token_hex(16))
+    record = None
     try:
+        record = record_deletion(target, trash)
         os.rename(target, trash)         # atomic: from here on nothing looks like a backup any more
     except OSError as e:
         busy.release()
@@ -763,7 +1224,7 @@ def delete_backup(confirm):
     def worker():
         global DELETING
         try:
-            shutil.rmtree(trash, ignore_errors=True)
+            finish_deletion(record)
             if os.path.isdir(trash):     # something refused to go away; the next start tries again
                 log("backup folder only partly removed: %s" % trash)
             with lock:
@@ -781,25 +1242,57 @@ def delete_backup(confirm):
     return 200, {"ok": True}
 
 
+def record_deletion(target, trash):
+    """Persist the exact directory identity before renaming it for deletion."""
+    folder = os.path.join(STATE_DIR, "pending-deletions")
+    os.makedirs(folder, exist_ok=True)
+    st = os.stat(target, follow_symlinks=False)
+    record = os.path.join(folder, secrets.token_hex(16) + ".json")
+    with open(record, "x") as f:
+        json.dump({"path": trash, "dev": st.st_dev, "ino": st.st_ino}, f)
+        f.flush()
+        os.fsync(f.fileno())
+    return record
+
+
+def finish_deletion(record):
+    with open(record) as f:
+        item = json.load(f)
+    path = item["path"]
+    parent, name = os.path.split(path)
+    if safe_dir(parent) != parent or not re.fullmatch(r"[0-9A-Za-z-]{8,64}\.deleting-[0-9a-f]{32}", name):
+        return
+    if not os.path.lexists(path):
+        os.remove(record)
+        return
+    st = os.stat(path, follow_symlinks=False)
+    if os.path.islink(path) or not os.path.isdir(path) or (st.st_dev, st.st_ino) != (item["dev"], item["ino"]):
+        return
+    shutil.rmtree(path, ignore_errors=True)
+    if not os.path.lexists(path):
+        os.remove(record)
+
+
 def sweep_trash():
-    """Finish deletions that a restart or power cut interrupted."""
-    for base in list(CONF["dirs"].values()):
-        real = safe_dir(base)
-        if not real:
-            continue
-        for n in os.listdir(real):
-            if ".deleting-" in n and UDID_FOLDER_RE.match(n.split(".deleting-")[0]):
-                p = os.path.join(real, n)
-                if os.path.isdir(p) and not os.path.islink(p):
-                    log("removing leftover %s" % n)
-                    shutil.rmtree(p, ignore_errors=True)
+    """Resume only deletions recorded by this service; never infer intent from names."""
+    with busy:
+        folder = os.path.join(STATE_DIR, "pending-deletions")
+        if not os.path.isdir(folder):
+            return
+        for name in os.listdir(folder):
+            if not re.fullmatch(r"[0-9a-f]{32}\.json", name):
+                continue
+            try:
+                finish_deletion(os.path.join(folder, name))
+            except Exception as e:
+                log("cannot resume deletion: %r" % e)
 
 
 def cancel_job():
     with lock:
         job = JOB
     if not job or not job.get("proc"):
-        return 409, {"error": "没有正在运行的备份"}
+        return 409, {"error": "没有正在运行的任务"}
     job["cancel"] = True
     proc = job["proc"]
     proc.send_signal(signal.SIGINT)
@@ -817,7 +1310,7 @@ def cancel_job():
 def set_encryption(enable, password):
     with lock:
         d = dict(DEV)
-    if not d["udid"] or not d["paired"]:
+    if not d["conn"] or not d["paired"]:
         return 409, {"error": "请先连接并配对设备"}
     if not backup_dir(d["udid"]):
         return 409, {"error": "请先选择这台设备的备份保存位置"}
@@ -847,45 +1340,97 @@ def set_encryption(enable, password):
         busy.release()
 
 
-def do_pair():
+def target_device(udid):
+    """The device an action is about: the given one (when it is known) or the one on screen."""
+    if udid and not known_udid(udid):
+        return None
+    return device_state(udid or None)
+
+
+def refresh_after(udid, net):
     with lock:
-        d = dict(DEV)
+        current = DEV["udid"] == udid
+    if current:
+        refresh_info(udid, net)
+    else:
+        refresh_other(udid, net)
+
+
+def do_pair(udid=None):
+    d = target_device(udid)
+    if d is None:
+        return 404, {"error": "不认识这台设备"}
     if d["conn"] != "usb":
         return 409, {"error": "配对需要 USB 连接"}
     rc, out = run(["idevicepair", "-u", d["udid"], "pair"], timeout=90)
     text = out.decode("utf-8", "replace").strip()
-    refresh_info(d["udid"], False)
-    log("pair: %s" % text)
+    refresh_after(d["udid"], False)
+    log("pair %s: %s" % (d["udid"], text))
     return 200, {"ok": rc == 0, "message": text}
 
 
-def do_wifi_sync(enable):
-    with lock:
-        d = dict(DEV)
+def do_wifi_sync(enable, udid=None):
+    d = target_device(udid)
+    if d is None:
+        return 404, {"error": "不认识这台设备"}
     if d["conn"] != "usb" or not d["paired"]:
         return 409, {"error": "开启 Wi-Fi 同步需要 USB 连接并已配对"}
     rc, out = run(["wifi-sync", d["udid"], "on" if enable else "off"], timeout=20)
-    refresh_info(d["udid"], False)
+    refresh_after(d["udid"], False)
     text = out.decode("utf-8", "replace").strip()
-    log("wifi-sync %s: %s" % ("on" if enable else "off", text))
+    log("wifi-sync %s %s: %s" % (d["udid"], "on" if enable else "off", text))
     return 200, {"ok": rc == 0, "message": text}
 
 
-def do_probe():
+def do_scan():
+    """Look for devices that are not known yet. A device that is plugged in but that usbmuxd2 does not list (it can miss
+    a second one) is brought back by restarting usbmuxd2, which is only done while no task runs."""
+    with lock:
+        known = set(CONF["devices"])
+    usb, net = list_ids(False), list_ids(True)
+    bus = apple_usb_count()
+    restarted = blocked = False
+    if bus > len(usb):
+        if JOB is None and not busy.locked():
+            restarted = restart_usbmuxd("scan: %d device(s) on the USB bus, usbmuxd2 lists %d" % (bus, len(usb)))
+            for _ in range(10):
+                time.sleep(1.5)
+                usb = list_ids(False)
+                if len(usb) >= bus:
+                    break
+        else:
+            blocked = True                 # restarting usbmuxd2 would cut the running task
+    net = list_ids(True)
+    new = [u for u in dict.fromkeys(usb + net) if u not in known]
+    for u in new:                          # read their state now instead of at the next round
+        with lock:
+            current = DEV["udid"] == u
+        if not current:
+            threading.Thread(target=refresh_other, args=(u, u in net and u not in usb), daemon=True).start()
+    MDNS_EVENT.set()
+    return 200, {"usb": usb, "net": net, "bus": bus, "new": new, "restarted": restarted, "blocked": blocked}
+
+
+def do_probe(udid=None):
     """Check connectivity; if the phone is on the LAN but usbmuxd2 misses it, reconnect right away."""
+    if udid and not known_udid(udid):
+        return 404, {"error": "不认识这台设备"}
     usb, net = list_ids(False), list_ids(True)
     restarted = False
-    if not usb and not net and JOB is None:
+    if (not usb and not net and JOB is None
+            and os.environ.get("USBMUXD_IMPLEMENTATION", "usbmuxd2") != "stock"):
         ips = [ip for ip in mdns_phone_ips() if tcp_open(ip)]
         if ips:
-            restart_usbmuxd("probe: phone is reachable at %s but usbmuxd2 does not list it" % ips[0])
-            restarted = True
+            restarted = restart_usbmuxd("probe: phone is reachable at %s but usbmuxd2 does not list it" % ips[0])
             for _ in range(8):
                 time.sleep(1.5)
                 net = list_ids(True)
                 if net:
                     break
-    return 200, {"usb": usb, "net": net, "restarted": restarted}
+    if not udid:
+        with lock:
+            udid = DEV["udid"]
+    return 200, {"usb": usb, "net": net, "restarted": restarted, "udid": udid}   # the answer is about the asked-for device
 
 
 # ---------------------------------------------------------------- schedule
@@ -960,19 +1505,25 @@ def scheduler():
     while True:
         try:
             with lock:
-                d = dict(DEV)
                 running = JOB is not None
                 hist = list(HISTORY)
-            udid = d["udid"]
-            s = sched_for(udid) if udid else None
-            if s and s["enabled"] and not running and d["paired"] and backup_dir(udid):
-                st = schedule_due(s, datetime.datetime.now(), hist, udid, last_attempt.get(udid, 0), time.time())
-                if st:
+                sel = DEV["udid"]
+            if not running:
+                for udid in sorted(visible_ids(), key=lambda u: (u != sel, u)):     # the device on screen first
+                    s = sched_for(udid)
+                    if not (s and s["enabled"] and backup_dir(udid)):
+                        continue
+                    st = schedule_due(s, datetime.datetime.now(), hist, udid, last_attempt.get(udid, 0), time.time())
+                    if not st:
+                        continue
+                    if not device_state(udid)["paired"]:
+                        continue
                     last_attempt[udid] = time.time()
-                    log("scheduled backup starting (%s)" % st.strftime("%Y-%m-%d %H:%M"))
-                    code, obj = start_backup(source="schedule")
+                    log("scheduled backup starting for %s (%s)" % (udid, st.strftime("%Y-%m-%d %H:%M")))
+                    code, obj = start_backup(source="schedule", udid=udid)
                     if code != 200:
                         log("scheduled backup could not start: %s" % obj.get("error"))
+                    break                                                            # the rest wait for the next round
         except Exception as e:
             log("scheduler error: %r" % e)
         time.sleep(30)
@@ -1149,6 +1700,19 @@ def get_health():
 
 
 # ---------------------------------------------------------------- status
+def restore_live_fields(job, now=None):
+    now = time.time() if now is None else now
+    transfer_quiet = max(0, now - job.get("lastTransfer", job["started"]))
+    result = {"transferQuietFor": int(transfer_quiet),
+              "deviceQuietFor": int(max(0, now - job["lastDeviceActivity"])) if job.get("lastDeviceActivity") else None,
+              "status": job["status"], "speed": job.get("speed")}
+    if transfer_quiet > 10:
+        result["speed"] = None
+        if job["status"] == "正在发送恢复数据":
+            result["status"] = "等待手机处理或请求下一批文件"
+    return result
+
+
 def build_status():
     with lock:
         d = dict(DEV)
@@ -1157,19 +1721,40 @@ def build_status():
         hist = [h for h in HISTORY if h.get("udid") in (None, d["udid"])][-50:]
         dirbytes = DIRSIZE.get(d["udid"])
         base = backup_dir(d["udid"])
-    j = None
-    if job:
+    with lock:
+        known = {u: dict(v) for u, v in CONF["devices"].items()}
+    if res and res.get("udid") not in (None, d["udid"]):       # the result of another device's backup is not shown here
+        res = None
+    j = other = None
+    if job and job.get("udid") not in (None, d["udid"]):       # another device is being backed up right now
+        other = {"udid": job["udid"], "name": known.get(job["udid"], {}).get("name") or "", "pct": job["pct"],
+                 "way": job["way"], "source": job.get("source"), "kind": job.get("kind")}
+    elif job:
         elapsed = time.time() - job["started"]
         j = {"running": True, "kind": job["kind"], "pct": job["pct"], "msg": job["msg"],
              "status": job["status"], "file": job["file"], "bytes": job["bytes"], "speed": job.get("speed"),
              "elapsed": int(elapsed), "eta": int(job["eta"]) if job["eta"] is not None else None,
-             "way": job["way"], "cancelling": job["cancel"]}
+             "totalEta": int(job["totalEta"]) if job.get("totalEta") is not None else None,
+             "way": job["way"], "cancelling": job["cancel"],
+             "quietFor": int(time.time() - job.get("lastActivity", job["started"])) if job.get("kind") == "restore" else None,
+             "deviceName": job.get("deviceName")}
+        if job.get("kind") == "restore":
+            j.update(restore_live_fields(job))
     devices = []
-    for u in dict.fromkeys(list(d["usbIds"]) + list(d["netIds"])):
-        k = KNOWN.get(u, {})
-        name, pt = (d["name"], d["ptype"]) if u == d["udid"] else (k.get("name"), k.get("ptype"))
-        devices.append({"udid": u, "name": name or "", "ptype": pt or "", "conn": "usb" if u in d["usbIds"] else "wifi",
-                        "selected": u == d["udid"]})
+    for u in dict.fromkeys(list(known) + list(d["usbIds"]) + list(d["netIds"]) + ([d["udid"]] if d["udid"] else [])):
+        k = known.get(u, {})
+        name, pt = (d["name"] or k.get("name"), d["ptype"] or k.get("ptype")) if u == d["udid"] else (k.get("name"), k.get("ptype"))
+        last = read_last(u)
+        if not name:
+            name, pt2 = backup_identity(u)
+            pt = pt or pt2
+        o = {} if u == d["udid"] else OTHER.get(u, {})
+        paired, wsync, ver = (d["paired"], d["wifiSync"], d["version"]) if u == d["udid"] else (o.get("paired"), o.get("wifiSync"), o.get("version"))
+        devices.append({"udid": u, "name": name or "", "ptype": pt or "", "paired": paired, "wifiSync": wsync, "version": ver,
+                        "conn": "usb" if u in d["usbIds"] else ("wifi" if u in d["netIds"] else None),
+                        "selected": u == d["udid"], "last": last["ts"] if last else None})
+    devices.sort(key=lambda x: ((x["name"] or x["udid"]).lower(), x["udid"]))
+    own = next((x for x in devices if x["selected"]), {})
     vol = volume_info(base) if base else None
     storage = {"total": vol["total"] if vol else None, "used": vol["used"] if vol else None,
                "free": vol["free"] if vol else None, "dir": dirbytes,
@@ -1178,21 +1763,22 @@ def build_status():
     udid = d["udid"]
     hostdir = to_host(base) if base else None
     return {
-        "device": {"connected": bool(udid), "udid": udid, "conn": d["conn"], "paired": d["paired"],
-                   "name": d["name"], "product": d["product"], "version": d["version"],
+        "device": {"connected": bool(d["conn"]), "udid": udid, "conn": d["conn"], "paired": d["paired"],
+                   "name": d["name"] or own.get("name") or None, "product": d["product"], "version": d["version"],
                    "capacity": d["capacity"], "free": d["free"], "encrypted": d["encrypted"],
-                   "wifiSync": d["wifiSync"], "ptype": d["ptype"], "usbIds": d["usbIds"], "netIds": d["netIds"]},
+                   "wifiSync": d["wifiSync"], "ptype": d["ptype"] or own.get("ptype") or None, "usbIds": d["usbIds"], "netIds": d["netIds"]},
         "config": {"configured": bool(base), "dir": hostdir, "suggest": root.get("suggest")},
         "devices": devices,
         "job": j,
+        "otherJob": other,
         "deleting": DELETING is not None,
         "result": res,
         "last": read_last(udid),
         "storage": storage,
         "history": list(reversed(hist)),
-        "paths": {"nas": (hostdir + ("/" + udid if udid else "")) if hostdir else None,
-                  "windows": "%APPDATA%\\Apple Computer\\MobileSync\\Backup\\" + (udid or "<UDID>"),
-                  "mac": "~/Library/Application Support/MobileSync/Backup/" + (udid or "<UDID>")},
+        "paths": {"nas": hostdir,
+                  "windows": "%USERPROFILE%\\Apple\\MobileSync\\Backup\\",
+                  "mac": "~/Library/Application Support/MobileSync/Backup/"},
         "schedule": sched_info(udid),
         "health": get_health(),
         "now": int(time.time()),
@@ -1298,13 +1884,17 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(401, {"error": "unauthorized"})
         routes = {
             "/api/backup": lambda: start_backup(),
+            "/api/restore": lambda: start_restore(data),
+            "/api/restore/confirm": lambda: confirm_restore_success(str(data.get("udid") or ""), data.get("ts")),
             "/api/cancel": lambda: cancel_job(),
             "/api/select": lambda: select_device(str(data.get("udid") or "")),
+            "/api/forget": lambda: forget_device(str(data.get("udid") or "")),
             "/api/delete-backup": lambda: delete_backup(str(data.get("confirm") or "")),
             "/api/encryption": lambda: set_encryption(bool(data.get("enable")), str(data.get("password") or "")),
-            "/api/pair": lambda: do_pair(),
-            "/api/wifi-sync": lambda: do_wifi_sync(bool(data.get("enable", True))),
-            "/api/probe": lambda: do_probe(),
+            "/api/pair": lambda: do_pair(str(data.get("udid") or "")),
+            "/api/wifi-sync": lambda: do_wifi_sync(bool(data.get("enable", True)), str(data.get("udid") or "")),
+            "/api/probe": lambda: do_probe(str(data.get("udid") or "")),
+            "/api/scan": lambda: do_scan(),
             "/api/schedule": lambda: set_schedule(DEV["udid"], data),
             "/api/config": lambda: set_backup_dir(DEV["udid"], str(data.get("path") or "")),
             "/api/mkdir": lambda: make_folder(str(data.get("parent") or ""), str(data.get("name") or "")),
@@ -1326,6 +1916,7 @@ def main():
     load_config()
     load_auth()
     log("web UI on port %d, %d device folder(s) configured" % (PORT, len(CONF["dirs"])))
+    seed_devices()
     threading.Thread(target=sweep_trash, daemon=True).start()
     threading.Thread(target=mdns_watch, daemon=True).start()
     threading.Thread(target=poller, daemon=True).start()

@@ -2,6 +2,8 @@
 
 **English** · [简体中文](README.zh-CN.md)
 
+See [CHANGELOG.md](CHANGELOG.md) for updates.
+
 Back up your iPhone and iPad **to your own NAS, over Wi-Fi or USB**, and manage it from a web page. The backups are full, optionally encrypted device backups in the same folder layout iTunes and Finder use.
 
 <p align="center"><img src="docs/images/hero.png" alt="Desktop and phone interface" width="900"></p>
@@ -223,13 +225,12 @@ The container runs as root. At run time it **does not need internet access** (bu
 | Browsers | Safari on an iPhone and an iPad; Chrome on Linux for the automated tests |
 | Resource use | About 1% of one CPU core and about 19 MiB of RAM while idle |
 
-**Verified on real hardware**: USB detection and pairing; turning on Wi-Fi sync; finding the phone over Wi-Fi and switching between USB and Wi-Fi; turning on backup encryption; opening the web interface on the phone and the iPad; starting and cancelling a backup; **complete encrypted backups over Wi-Fi and USB** (an iPhone, about 131 GB, and an iPad, about 33 GB); deleting a backup; and **that the device accepts the backup password and starts unpacking the backup** (`idevicebackup2 unback`, stopped after two minutes).
+**Verified on real hardware**: USB detection and pairing; turning on Wi-Fi sync; finding the phone over Wi-Fi and switching between USB and Wi-Fi; turning on backup encryption; opening the web interface on the phone and the iPad; starting and cancelling a backup; **complete encrypted backups over Wi-Fi and USB** (an iPhone, about 131 GB, and an iPad, about 33 GB); deleting a backup; and **a complete direct restore from a 123.6 GB encrypted NAS backup to the same iPhone 15 running iOS 27.0, reaching the home screen**.
 
 **Not verified yet (do not assume they work)**
 
-- **Restoring a phone from a backup made by this tool.** The folder layout is the one iTunes and Finder use, the device unlocks the backup with its password and starts reading it, but a complete restore onto a phone has **not** been tried, and neither has unpacking the whole backup.
 - Unattended nightly backups (in particular whether a locked phone asks for its passcode).
-- Restoring an iPad. (Backing an iPad up works.)
+- Restoring an iPad. (Backing an iPad up works; direct restore has only been completed on an iPhone 15 so far.)
 - The automatic choice of layout when you tap Request Desktop Website, and the iPad getting the phone layout: the decision logic was tested in simulation, the behaviour on real devices has not been checked item by item.
 - Other NAS brands (Synology, QNAP, Unraid, TrueNAS, ...), arm64, other iOS versions.
 
@@ -241,7 +242,7 @@ The container runs as root. At run time it **does not need internet access** (bu
 - **One device is handled at a time.** With several devices visible you pick one with the switcher next to the device name (desktop layout; the phone layout has none yet). Backups do not run in parallel, and a **scheduled backup only runs for the device that is selected**. Backup folder and schedule are stored per device.
 - **A locked device may ask for its passcode.** Right after a restart, before the first unlock, a backup always asks; otherwise it depends on the device and has not been tried overnight yet.
 - **No browsing of single files.** It is a full device backup that can only be restored as a whole.
-- **Restoring cannot be done on the phone.** Use iTunes on Windows or Finder on a Mac.
+- Direct restore is available from the NAS web page over USB. Apple Devices/iTunes on Windows or Finder on a Mac remain alternatives.
 - **The desktop layout is Chinese only for now.** The phone layout has English and Simplified Chinese.
 - **The web page is plain HTTP, no TLS.** Only for the LAN, see [Security and privacy](#10-security-and-privacy).
 - **Wi-Fi backups are slower than USB** and use Wi-Fi bandwidth. Do them at night.
@@ -279,13 +280,19 @@ Scheduled backups use the NAS's time zone; the compose file mounts `/etc/localti
 
 ## 8. Restoring a backup
 
-Restoring is done on a computer; the phone cannot restore from the NAS directly.
+**Experimental: Restore directly from NAS.** We tested a 123.6 GB encrypted backup on an iPhone 15 running iOS 27.0 and confirmed the phone reached the home screen. More testing is needed across other devices, iOS versions, and backup conditions. We welcome community testing; please report the device model, iOS version, and whether the restore completed successfully. A backup can only be restored to the device it came from, and the target iOS version must be at least as new as the backup. Keep the USB connection during restore. After receiving the data, the phone restarts; the NAS cannot confirm completion while that happens. Wait for the phone to reach iOS, unlock it, and check the data before clicking **Confirm Restore Success** in the history.
 
-**Windows (iTunes)**
+How restore works: the restore worker runs on the NAS, while Apple's BackupAgent2 on the iPhone decrypts and applies the data. The phone requests manifests and files in batches over Apple's MobileBackup2 protocol; the NAS reads the requested content from the original backup and sends it to the phone over USB/usbmuxd. Before starting, the NAS verifies the backup password and reads the encrypted manifest; it does not first decrypt the entire photo and app-data payload onto the NAS. The phone processes the received data, completes setup, and restarts. While the phone restarts, the NAS cannot tell whether iOS finished applying the restore, so **“Transfer complete” means only that protocol transfer ended; it does not mean the restore succeeded**. Wait until the phone reaches the lock or home screen, unlock it, and check the data. Then click **Confirm Restore Success** in the history; only then does the entry turn green as **Restore successful**.
+
+Direct restore runs an isolated MobileBackup2 protocol worker and keeps per-attempt diagnostics in the configuration directory under `restore-logs/`. The page shows sent bytes and estimated total and remaining time based on measured transfer speed; these are approximate and may change while the phone processes data or restarts. See [Restore engine](docs/restore-engine.md).
+
+If direct restore does not work, use Apple Devices, iTunes, or Finder as described below:
+
+**Windows (the Apple Devices app, or iTunes from the Microsoft Store)**
 
 1. Copy the backup folder from the NAS (its name is the device's UDID) to the Windows PC.
-2. Put it in `%APPDATA%\Apple Computer\MobileSync\Backup\` and **do not rename it**.
-3. Connect the iPhone, click the phone icon at the top left of iTunes, click Restore Backup in Summary and choose the backup; enter the backup password if it is encrypted.
+2. Put it in `%USERPROFILE%\Apple\MobileSync\Backup\` (for example `C:\Users\<you>\Apple\MobileSync\Backup\`) and **do not rename it**. The older iTunes from Apple's website uses `%APPDATA%\Apple Computer\MobileSync\Backup\` instead.
+3. Turn off Find My iPhone on the device and connect it. In iTunes click the phone icon at the top left and click Restore Backup in Summary; in the Apple Devices app select the device and click Restore Backup... under General. Choose the backup and enter the backup password if it is encrypted.
 
 **macOS (Finder)**
 

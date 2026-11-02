@@ -7,7 +7,7 @@
 import os, re, sys, time, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from helpers import Api, SECOND_UDID, Server, wait_for  # noqa: E402
+from helpers import Api, SECOND_UDID, Server, UDID, wait_for  # noqa: E402
 from playwright.sync_api import expect, sync_playwright  # noqa: E402
 
 UA_IPHONE = "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"
@@ -33,7 +33,8 @@ class UI(unittest.TestCase):
 
     def setUp(self):
         self.errors = []
-        self.srv.phone(**FRESH)
+        self.srv.phone(**FRESH, second=None)
+        self.api.post("/api/select", {"udid": UDID})          # a failed test may have left the other device chosen
         self.idle()
         wait_for(lambda: self.api.get("/api/status")[1]["device"]["conn"] == "wifi", 20)
 
@@ -167,8 +168,10 @@ class UI(unittest.TestCase):
             p.reload(); p.locator(".side button", has_text="定时备份").click()
             self.assertEqual((p.locator("#schTime").input_value(), p.locator("#schD5").is_checked(), p.locator("#schRetry").input_value()), ("21:45", False, "6"))
             # connection page, log page
-            p.locator(".side button", has_text="连接与配对").click(); expect(p.locator("#s1")).to_have_class(re.compile("done")); expect(p.locator("#s4")).to_have_class(re.compile("done"))
-            p.locator("#probe").click(); expect(p.locator("#probeOut")).to_contain_text("无线", timeout=15000)
+            p.locator(".side button", has_text="连接与配对").click(); expect(p.locator("#connCards .cc")).to_have_count(1)
+            p.locator("#scanBtn").click(); expect(p.locator("#scanOut")).to_contain_text("没有发现新设备", timeout=20000)
+            expect(p.locator("#connCards .cp span", has_text="① 已通过无线找到")).to_have_class(re.compile("ok")); expect(p.locator("#connCards .cp span", has_text="④ 无线连接正常")).to_have_class(re.compile("ok"))
+            p.locator("#connCards .ca .b", has_text="检测连接").click(); expect(p.locator("#connCards .ca .pill")).to_contain_text("无线", timeout=15000)
             p.locator(".side button", has_text="运行日志").click(); expect(p.locator("#logBox")).to_contain_text("backup", timeout=8000)
             # encryption dialog: wrong password is reported, Escape closes it
             p.locator(".side button", has_text="摘要").click(); p.locator("#encChk").click(); expect(p.locator("#dBox h2")).to_have_text("关闭备份加密")
@@ -324,32 +327,96 @@ class UI(unittest.TestCase):
             expect(p.locator("#cards .acard", has_text="Delete Backup")).to_have_class(re.compile("dis"), timeout=15000)
 
 
-    def test_12_device_switcher_on_the_desktop(self):
+    IPAD = {"conn": "usb", "name": "Sam’s iPad", "ptype": "iPad13,1"}
+
+    def prepare(self):
+        """The Air is chosen and has a backup folder (otherwise the first-run picker opens by itself); no iPad is known."""
+        self.srv.phone(second=None); self.api.post("/api/select", {"udid": UDID})
+        wait_for(lambda: self.api.get("/api/status")[1]["device"]["name"] == "Air", 90, msg="the Air")
         root = self.api.get("/api/browse?path=")[1]["volumes"][0]["path"]; self.api.post("/api/mkdir", {"parent": root, "name": "iphone_backups"})
-        self.api.post("/api/config", {"path": root + "/iphone_backups"})       # otherwise the first-run folder picker opens by itself
-        self.srv.phone(second=None)
+        self.assertEqual(self.api.post("/api/config", {"path": root + "/iphone_backups"})[0], 200)
+        wait_for(lambda: all(x["conn"] is None for x in self.api.get("/api/status")[1]["devices"] if x["udid"] != UDID), 30, msg="the iPad is offline")
+        self.api.post("/api/forget", {"udid": SECOND_UDID})
+        wait_for(lambda: len(self.api.get("/api/status")[1]["devices"]) == 1, 30, msg="only the Air is known")
+
+    def two_devices(self):
+        """The iPad shows up on USB and must not take over."""
+        self.srv.phone(second=self.IPAD)
+        wait_for(lambda: len(self.api.get("/api/status")[1]["devices"]) == 2 and all(d["name"] for d in self.api.get("/api/status")[1]["devices"]), 90, msg="both devices with names")
+
+    def test_12_device_switcher_on_the_desktop(self):
+        self.prepare()
         with self.context("desktop") as c:
             p = self.page(c)
             expect(p.locator("#hTitle")).to_have_text("Air", timeout=15000)
             expect(p.locator("#devSw")).to_be_hidden()                               # one device: nothing to switch
-            self.srv.phone(second={"conn": "usb", "name": "Sam’s iPad", "ptype": "iPad13,1"})
-            expect(p.locator("#hTitle")).to_have_text("Sam’s iPad", timeout=30000)   # the USB device takes over by itself
-            self.api.post("/api/mkdir", {"parent": root, "name": "ipad_backups"}); self.api.post("/api/config", {"path": root + "/ipad_backups"})
-            if p.locator("#dlg").is_visible(): p.keyboard.press("Escape")             # the folder picker opens by itself for a device without one
-            expect(p.locator("#devSw")).to_be_visible(timeout=10000)
-            wait_for(lambda: all(d["name"] for d in self.api.get("/api/status")[1]["devices"]), 90, msg="names of both devices")
+            self.two_devices()
+            expect(p.locator("#devSw")).to_be_visible(timeout=15000)
+            expect(p.locator("#hTitle")).to_have_text("Air")                            # a newly plugged-in device does not take over
             p.locator("#devSwBtn").click(); expect(p.locator("#devMenu")).to_be_visible()
-            expect(p.locator("#devMenu button")).to_have_count(2)
-            expect(p.locator("#devMenu button[aria-checked=true]")).to_contain_text("Sam’s iPad")
+            expect(p.locator("#devMenu .dr")).to_have_count(2)
+            expect(p.locator("#devMenu .dr[aria-checked=true]")).to_contain_text("Air")
+            expect(p.locator("#devMenu .dr", has_text="Sam’s iPad")).to_contain_text("USB")
+            expect(p.locator("#devMenu .fg")).to_have_count(0)                          # both online: nothing to forget
             p.keyboard.press("Escape"); expect(p.locator("#devMenu")).to_be_hidden()
-            p.locator("#devSwBtn").click(); p.locator("#devMenu button", has_text="Air").click()
-            expect(p.locator("#hTitle")).to_have_text("Air", timeout=15000); expect(p.locator("#devMenu")).to_be_hidden()
-            expect(p.locator("#kvUdid")).not_to_have_text(SECOND_UDID)
-            self.srv.phone(backup_seconds=25.0); self.api.post("/api/backup")           # during a backup the switcher is locked
-            expect(p.locator("#devSwBtn")).to_be_disabled(timeout=15000)
-            self.idle()
+            p.locator("#devSwBtn").click(); p.locator("#devMenu .sel", has_text="Sam’s iPad").click()
+            expect(p.locator("#hTitle")).to_have_text("Sam’s iPad", timeout=15000); expect(p.locator("#devMenu")).to_be_hidden()
+            expect(p.locator("#dlg")).to_be_visible(timeout=15000)                      # a device without a backup folder gets the folder picker
+            p.keyboard.press("Escape"); expect(p.locator("#dlg")).to_be_hidden()
+            # the iPad is unplugged: the page stays on it, offline, with the last backup time; the Air is offered, not forced
             self.srv.phone(second=None)
-            expect(p.locator("#devSw")).to_be_hidden(timeout=30000)
+            expect(p.locator("#hVer")).to_contain_text("未连接", timeout=30000)
+            expect(p.locator("#hTitle")).to_have_text("Sam’s iPad")
+            expect(p.locator("#devHint")).to_be_visible(); expect(p.locator("#devHintT")).to_contain_text("Air")
+            p.locator(".side button", has_text="连接与配对").click()                    # every device has its own card: the Air is on Wi-Fi, the iPad is not
+            expect(p.locator("#connCards .cc")).to_have_count(2)
+            expect(p.locator("#connCards .cc", has_text="Air").locator(".cp span", has_text="④")).to_have_class(re.compile("ok"))
+            expect(p.locator("#connCards .cc", has_text="Sam’s iPad").locator(".cp span", has_text="① 未检测到设备")).to_be_visible()
+            expect(p.locator("#connCards .cc", has_text="Sam’s iPad").locator(".cp span", has_text="④")).not_to_have_class(re.compile("ok"))
+            p.locator("#connCards .cc", has_text="Sam’s iPad").locator(".ca .b", has_text="检测连接").click()
+            expect(p.locator("#connCards .cc", has_text="Sam’s iPad").locator(".pill")).to_contain_text("没有找到这台设备", timeout=15000)
+            p.locator(".side button", has_text="摘要").click()
+            p.locator("#devHintB").click(); expect(p.locator("#hTitle")).to_have_text("Air", timeout=15000)
+            expect(p.locator("#devHint")).to_be_hidden()
+            # forget the offline iPad
+            p.locator("#devSwBtn").click(); expect(p.locator("#devMenu .fg")).to_have_count(1)
+            p.locator("#devMenu .fg").click(); expect(p.locator("#dBox h2")).to_have_text("忘记这台设备"); expect(p.locator("#fName")).to_have_text("Sam’s iPad")
+            p.locator("[data-a=forget]").click(); expect(p.locator("#dlg")).to_be_hidden(timeout=8000)
+            expect(p.locator("#devSw")).to_be_hidden(timeout=30000)                     # one device left
+            expect(p.locator("#hTitle")).to_have_text("Air")
+
+    def test_13_device_switcher_on_the_phone(self):
+        self.prepare()
+        with self.context("phone", lang="en-US") as c:
+            p = self.page(c, "/m?lang=en")
+            expect(p.locator("h1.ttl")).to_have_text("Air", timeout=15000)
+            expect(p.locator(".devbar")).to_have_count(0)
+            self.two_devices()
+            expect(p.locator(".devbar")).to_be_visible(timeout=20000)
+            expect(p.locator(".devbar")).to_contain_text("2 devices"); expect(p.locator("h1.ttl")).to_have_text("Air")
+            p.locator(".devbar").click(); expect(p.locator(".drow")).to_have_count(2)
+            expect(p.locator(".drow", has_text="Sam’s iPad")).to_contain_text("USB")
+            expect(p.locator(".dfg")).to_have_count(0)
+            p.locator(".dsel", has_text="Sam’s iPad").click()
+            expect(p.locator("h1.ttl")).to_have_text("Sam’s iPad", timeout=15000)
+            expect(p.locator(".sheet")).to_contain_text("Choose a Backup Folder", timeout=15000)      # the new device has no folder yet
+            p.locator(".sheet button", has_text="Done").first.click(); expect(p.locator("#scrim")).to_be_hidden()
+            self.srv.phone(second=None)                                                  # the iPad drops off: still on it, Air offered
+            expect(p.locator(".devhint")).to_be_visible(timeout=30000); expect(p.locator("h1.ttl")).to_have_text("Sam’s iPad")
+            self.assertNotIn(self.api.get("/api/status")[1]["device"]["udid"], self.api.get("/api/status")[1]["device"]["netIds"])
+            p.locator("#cards .acard", has_text="Connection & Pairing").locator(".go").click(); expect(p.locator("#shT")).to_have_text("Connection & Pairing")
+            p.locator("#sheet .pab", has_text="Scan for New Devices").click(); expect(p.locator("#sheet .po").first).to_contain_text("No new device", timeout=20000)
+            expect(p.locator("#sheet .pc")).to_have_count(2)                                   # a card per device, the offline iPad included
+            expect(p.locator("#sheet .pc", has_text="Air")).to_contain_text("Wi-Fi"); expect(p.locator("#sheet .pc", has_text="Sam’s iPad")).to_contain_text("Offline")
+            p.locator("#sheet .pc", has_text="Sam’s iPad").get_by_role("button", name="Check Connection").click()
+            expect(p.locator("#sheet .pc", has_text="Sam’s iPad").locator(".po")).to_contain_text("not found", timeout=15000)
+            p.get_by_role("button", name="Done").click()
+            p.locator(".devhint .hb").click(); expect(p.locator("h1.ttl")).to_have_text("Air", timeout=15000)
+            p.locator(".devbar").click(); expect(p.locator(".dfg")).to_have_count(1)
+            p.locator(".dfg").click(); expect(p.locator(".sheet")).to_contain_text("Forget this device")
+            p.locator(".cta", has_text="Forget Device").click()
+            expect(p.locator(".devbar")).to_have_count(0, timeout=30000)
+            expect(p.locator("h1.ttl")).to_have_text("Air")
 
 
 if __name__ == "__main__":

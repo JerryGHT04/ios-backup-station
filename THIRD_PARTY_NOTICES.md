@@ -1,6 +1,9 @@
 # Third-party notices
 
-The code in this repository is MIT licensed (see `LICENSE`). The Docker image that the `Dockerfile` builds also
+The web application in this repository is MIT licensed (see `LICENSE`). The isolated
+`app/restore_worker.py` is GPL-3.0-only (see `LICENSE.restore`) and uses pymobiledevice3 through its Python API.
+The web application communicates with that worker through JSON on standard input/output.
+The Docker image that the `Dockerfile` builds also
 contains other people's software. It is **not** part of this repository: the `Dockerfile` downloads it from the
 upstream projects while building, and the image uses the libraries as shared libraries (`/usr/local/lib`), so they
 can be replaced by rebuilding with a different upstream version.
@@ -13,7 +16,10 @@ can be replaced by rebuilding with a different upstream version.
 | libimobiledevice-glue | LGPL-2.1 | https://github.com/libimobiledevice/libimobiledevice-glue |
 | libtatsu | LGPL-2.1 | https://github.com/libimobiledevice/libtatsu |
 | libgeneral | LGPL-2.1 | https://github.com/tihmstar/libgeneral |
+| usbmuxd (optional standard USB transport) | GPL-2.0-or-GPL-3.0 | https://github.com/libimobiledevice/usbmuxd |
 | usbmuxd2 | LGPL-3.0 | https://github.com/tihmstar/usbmuxd2 |
+| pymobiledevice3 11.49.0 (restore worker runtime) | GPL-3.0 | https://github.com/doronz88/pymobiledevice3 |
+| pyiosbackup 0.2.4 (offline encrypted manifest password verification) | GPL-3.0 | https://github.com/matan1008/pyiosbackup |
 | Debian GNU/Linux base image and packages (python3, libusb, avahi client libraries, OpenSSL, coreutils and others) | various, see `/usr/share/doc/*/copyright` inside the image | https://www.debian.org |
 
 The licenses above were read from the license files in the upstream repositories when this project was prepared
@@ -33,6 +39,8 @@ usbmuxd2              744c46f
 ```
 
 A built image records the revisions it was made from in `/usr/local/share/build-revisions.txt`.
+The Python restore runtime is isolated in `/opt/restore`; its installed distributions and license metadata
+can be inspected with `/opt/restore/bin/pip list` and `/opt/restore/bin/pip show`.
 
 ## Trademarks
 

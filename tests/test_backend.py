@@ -10,7 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from helpers import Api, SECOND_UDID, Server, UDID, wait_for  # noqa: E402
 
 FRESH_PHONE = dict(usb=False, net=True, blind=False, net_blind=False, paired=True, enc=True, backup_password="1234", wifi_sync=True,
-                   locked_wait=0.0, backup_seconds=4.0, abort_delay=1.0, backup_fail=False, restart_fixes=True, usbmuxd_running=True)
+                   locked_wait=0.0, backup_seconds=4.0, abort_delay=1.0, backup_fail=False, restart_fixes=True, usbmuxd_running=True, second=None)
 
 
 def raw_request(port, payload):
@@ -155,7 +155,7 @@ class FlowTests(unittest.TestCase):
         wait_for(lambda: self.status()["job"] is None, 30, msg="no running job")
 
     def setUp(self):
-        self.idle(); self.phone(**FRESH_PHONE)
+        self.idle(); self.phone(**FRESH_PHONE); self.api.post("/api/select", {"udid": UDID})      # earlier tests may have chosen the other device
         wait_for(lambda: self.status()["device"]["conn"] == "wifi" and self.status()["device"]["paired"] is True, 25, msg="fresh phone")
 
     def folder(self):
@@ -352,21 +352,21 @@ class FlowTests(unittest.TestCase):
         self.api.post("/api/schedule", {"enabled": False, "time": "20:00", "days": list(range(7)), "retryHours": 3})
 
     def test_16_usbmuxd_blind_to_a_plugged_in_phone(self):
-        self.phone(usb=True, net=False, blind=True); r0 = self.srv.phone_state()["restarts"]
+        self.phone(usb=True, net=False, blind=True); r0 = self.srv.phone_state().get("restarts", 0)
         t0 = time.time(); self.settle(conn="usb", timeout=30); dt = time.time() - t0
-        self.assertGreater(self.srv.phone_state()["restarts"], r0, "the watchdog must have restarted usbmuxd2"); self.assertLess(dt, 16, "took %.1fs" % dt)
+        self.assertGreater(self.srv.phone_state().get("restarts", 0), r0, "the watchdog must have restarted usbmuxd2"); self.assertLess(dt, 16, "took %.1fs" % dt)
         print("   (USB blind -> recovered in %.1f s)" % dt)
 
     def test_17_cable_pulled_falls_back_to_wifi_quickly(self):
-        self.phone(usb=True, net=True); self.settle(conn="usb"); r0 = self.srv.phone_state()["restarts"]
+        self.phone(usb=True, net=True); self.settle(conn="usb"); r0 = self.srv.phone_state().get("restarts", 0)
         self.phone(usb=False, net_blind=True)             # usbmuxd forgot the network entry, the phone is still on the LAN
         t0 = time.time(); self.settle(conn="wifi", timeout=30); dt = time.time() - t0
-        self.assertGreater(self.srv.phone_state()["restarts"], r0); self.assertLess(dt, 14, "took %.1fs" % dt)
+        self.assertGreater(self.srv.phone_state().get("restarts", 0), r0); self.assertLess(dt, 14, "took %.1fs" % dt)
         print("   (cable pulled -> Wi-Fi again in %.1f s)" % dt)
 
     def test_18_restarts_back_off_when_they_do_not_help(self):
-        self.phone(usb=False, net=True, net_blind=True, restart_fixes=False); r0 = self.srv.phone_state()["restarts"]
-        time.sleep(26); n = self.srv.phone_state()["restarts"] - r0
+        self.phone(usb=False, net=True, net_blind=True, restart_fixes=False); r0 = self.srv.phone_state().get("restarts", 0)
+        time.sleep(26); n = self.srv.phone_state().get("restarts", 0) - r0
         self.assertLessEqual(n, 2, "restarted %d times in 26 s even though it does not help" % n); self.assertGreaterEqual(n, 1)
         self.phone(net_blind=False, restart_fixes=True)
 
@@ -417,35 +417,144 @@ class FlowTests(unittest.TestCase):
         os.remove(target); __import__("shutil").rmtree(other)
         self.run_backup(); self.assertTrue(os.path.isdir(target), "a new backup works after a deletion")
 
-    def test_22_switch_between_two_devices(self):
+    IPAD = {"conn": "usb", "name": "Sam’s iPad", "ptype": "iPad13,1"}
+
+    def devices(self): return {d["udid"]: d for d in self.status()["devices"]}
+
+    def test_22_a_chosen_device_stays_chosen(self):
         self.folder()
-        self.assertEqual(len(self.status()["devices"]), 1, "one device: nothing to switch")
-        self.phone(second={"conn": "usb", "name": "Sam’s iPad", "ptype": "iPad13,1"})      # the iPad is on USB, the iPhone on Wi-Fi
-        wait_for(lambda: len(self.status()["devices"]) == 2, 20, msg="both devices listed")
-        wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20, msg="USB device is selected by default")
-        wait_for(lambda: {d["udid"]: d["name"] for d in self.status()["devices"]}.get(UDID) == "Air", 90, msg="the name of the other device")
-        names = {d["udid"]: (d["name"], d["conn"], d["selected"]) for d in self.status()["devices"]}
-        self.assertEqual(names[SECOND_UDID], ("Sam’s iPad", "usb", True)); self.assertEqual(names[UDID], ("Air", "wifi", False))
+        self.assertEqual(list(self.devices()), [UDID], "one device: nothing to switch")
+        self.phone(second=self.IPAD)                                                         # the iPad is plugged in over USB
+        wait_for(lambda: len(self.devices()) == 2 and all(d["name"] for d in self.devices().values()), 90, msg="both devices listed with names")
+        self.assertEqual(self.status()["device"]["udid"], UDID, "a newly connected device must not take over")
+        self.assertEqual({u: (d["name"], d["conn"], d["selected"]) for u, d in self.devices().items()},
+                         {UDID: ("Air", "wifi", True), SECOND_UDID: ("Sam’s iPad", "usb", False)})
         self.assertEqual(self.api.post("/api/select", {"udid": "00000000-0000000000000000"})[0], 404, "an unknown device is refused")
         self.assertEqual(self.api.post("/api/select", {})[0], 404)
-        code, j, _ = self.api.post("/api/select", {"udid": UDID}); self.assertEqual((code, j.get("ok")), (200, True), j)
-        wait_for(lambda: self.status()["device"]["udid"] == UDID and self.status()["device"]["name"] == "Air", 20, msg="the page follows the choice")
-        self.assertEqual(self.status()["device"]["conn"], "wifi")
-        self.assertEqual([d["selected"] for d in self.status()["devices"] if d["udid"] == UDID], [True])
-        # a task blocks switching
+        code, j, _ = self.api.post("/api/select", {"udid": SECOND_UDID}); self.assertEqual((code, j.get("ok")), (200, True), j)
+        wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID and self.status()["device"]["name"] == "Sam’s iPad", 25, msg="the page follows the choice")
+        self.assertEqual(self.status()["device"]["conn"], "usb")
+        # the chosen device drops off: it stays chosen, offline, with its name; the other one does not take over
+        self.phone(second=None)
+        wait_for(lambda: self.devices()[SECOND_UDID]["conn"] is None, 25, msg="the iPad is offline")
+        d = self.status()["device"]
+        self.assertEqual((d["udid"], d["connected"], d["name"], d["ptype"]), (SECOND_UDID, False, "Sam’s iPad", "iPad13,1"))
+        self.assertEqual(self.api.post("/api/backup")[0], 409, "no backup of an offline device")
+        time.sleep(8); self.assertEqual(self.status()["device"]["udid"], SECOND_UDID, "still the iPad, although the Air is connected")
+        self.assertEqual(self.devices()[UDID]["conn"], "wifi")
+        # the probe is about the chosen device: the Air is found, but the answer says that the iPad is not
+        code, j, _ = self.api.post("/api/probe"); self.assertEqual(code, 200)
+        self.assertEqual(j["udid"], SECOND_UDID); self.assertIn(UDID, j["net"]); self.assertNotIn(j["udid"], j["net"] + j["usb"])
+        self.assertNotIn(self.status()["device"]["udid"], self.status()["device"]["netIds"], "the page must not call the iPad 'found over Wi-Fi'")
+        # it comes back
+        self.phone(second=self.IPAD)
+        wait_for(lambda: self.status()["device"]["connected"] and self.status()["device"]["conn"] == "usb", 25, msg="the iPad is back")
+        # a backup of the Air runs while the page shows the iPad: the page says so and offers no second job
+        self.api.post("/api/select", {"udid": UDID}); wait_for(lambda: self.status()["device"]["udid"] == UDID and self.status()["device"]["paired"], 20, msg="the Air is ready")
         self.phone(backup_seconds=15.0); self.assertEqual(self.api.post("/api/backup")[0], 200)
         wait_for(lambda: self.status()["job"] is not None, 8, 0.1, msg="job")
-        code, j, _ = self.api.post("/api/select", {"udid": SECOND_UDID}); self.assertEqual(code, 409, j)
-        self.assertEqual(self.status()["device"]["udid"], UDID); self.idle(); self.phone(backup_seconds=4.0)
-        # the choice survives a restart, and a vanished device falls back to the one that is left
+        self.assertEqual(self.api.post("/api/select", {"udid": SECOND_UDID})[0], 200, "viewing another device is allowed during a backup")
+        wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20)
+        s = self.status(); self.assertIsNone(s["job"]); self.assertEqual((s["otherJob"] or {}).get("udid"), UDID)
+        self.assertEqual(self.api.post("/api/backup")[0], 409, "one job at a time")
+        self.api.post("/api/select", {"udid": UDID}); wait_for(lambda: self.status()["device"]["udid"] == UDID, 20)
+        self.assertIsNotNone(self.status()["job"]); self.assertIsNone(self.status()["otherJob"])
+        self.idle(); self.phone(backup_seconds=4.0)
+        # the choice and the device list survive a restart
+        self.api.post("/api/select", {"udid": SECOND_UDID}); wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20)
         self.srv.proc.terminate(); self.srv.proc.wait(5); self.srv.start()
-        wait_for(lambda: self.api.get("/api/status")[0] == 200 and self.status()["device"]["udid"] == UDID, 25, msg="the choice after a restart")
+        wait_for(lambda: self.api.get("/api/status")[0] == 200 and self.status()["device"]["udid"] == SECOND_UDID, 25, msg="the choice after a restart")
+        self.assertEqual(sorted(self.devices()), sorted([UDID, SECOND_UDID]))
+
+    def test_23_forget_a_device(self):
+        self.folder(); self.phone(second=self.IPAD)
+        wait_for(lambda: len(self.devices()) == 2 and self.devices()[SECOND_UDID]["conn"] == "usb" and all(d["name"] for d in self.devices().values()), 90, msg="both devices listed and the iPad online")
+        self.assertEqual(self.api.post("/api/forget", {"udid": SECOND_UDID})[0], 409, "an online device cannot be forgotten")
+        self.assertEqual(self.api.post("/api/forget", {"udid": "00000000-0000000000000000"})[0], 404)
+        self.assertEqual(self.api.post("/api/forget", {})[0], 404)
+        self.api.post("/api/select", {"udid": SECOND_UDID}); wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20)
+        self.phone(second=None); wait_for(lambda: self.devices()[SECOND_UDID]["conn"] is None, 25)
+        os.makedirs(os.path.join(self.api.get("/api/browse?path=")[1]["volumes"][0]["path"], "iphone_backups", SECOND_UDID), exist_ok=True)
+        code, j, _ = self.api.post("/api/forget", {"udid": SECOND_UDID}); self.assertEqual((code, j.get("ok")), (200, True), j)
+        wait_for(lambda: self.status()["device"]["udid"] == UDID, 25, msg="the next device is chosen after forgetting the chosen one")
+        self.assertEqual(list(self.devices()), [UDID])
+        self.assertTrue(os.path.isdir(os.path.join(self.api.get("/api/browse?path=")[1]["volumes"][0]["path"], "iphone_backups", SECOND_UDID)), "backup files are never deleted")
+        self.srv.proc.terminate(); self.srv.proc.wait(5); self.srv.start()
+        wait_for(lambda: self.api.get("/api/status")[0] == 200 and self.status()["device"]["connected"], 25)
+        self.assertEqual(list(self.devices()), [UDID], "a forgotten device stays forgotten after a restart")
+        self.phone(second=self.IPAD)                                                          # but it is listed again when it shows up
+        wait_for(lambda: len(self.devices()) == 2 and self.devices()[SECOND_UDID]["name"] == "Sam’s iPad", 90, msg="the iPad is listed again")
+
+    def test_24_every_device_has_its_own_schedule(self):
+        self.folder(); self.phone(second=self.IPAD, backup_seconds=2.0)
+        wait_for(lambda: len(self.devices()) == 2, 30)
+        self.api.post("/api/select", {"udid": SECOND_UDID}); wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20)
+        root = self.api.get("/api/browse?path=")[1]["volumes"][0]["path"]
+        self.api.post("/api/mkdir", {"parent": root, "name": "ipad_backups"})
+        self.assertEqual(self.api.post("/api/config", {"path": root + "/ipad_backups"})[0], 200)
+        now = datetime.datetime.now(); start = (now + datetime.timedelta(minutes=1 if now.second < 35 else 2)).replace(second=0, microsecond=0)
+        self.assertEqual(self.api.post("/api/schedule", {"enabled": True, "time": start.strftime("%H:%M"), "days": list(range(7)), "retryHours": 1})[0], 200)
+        self.api.post("/api/select", {"udid": UDID}); wait_for(lambda: self.status()["device"]["udid"] == UDID, 20)   # the page shows the other device
+        def done():
+            self.api.post("/api/select", {"udid": SECOND_UDID}); time.sleep(1.5)
+            s = self.status(); return s if any(h.get("source") == "schedule" and h.get("udid") == SECOND_UDID for h in s["history"]) else None
+        s = wait_for(done, (start - now).total_seconds() + 90, 1.0, msg="the scheduled backup of the iPad")
+        h = [h for h in s["history"] if h.get("source") == "schedule"][0]; self.assertEqual(h["status"], "ok")
+        self.assertTrue(os.path.isdir(os.path.join(root, "ipad_backups", SECOND_UDID)), "the iPad was backed up into its own folder")
+        self.api.post("/api/schedule", {"enabled": False, "time": "20:00", "days": list(range(7)), "retryHours": 3})
+
+    def test_25_connect_and_pair_every_device_on_its_own(self):
+        self.folder()
+        self.phone(second=dict(self.IPAD, paired=False, wifi_sync=False))                      # the iPad on USB, not paired yet
+        wait_for(lambda: self.devices().get(SECOND_UDID, {}).get("paired") is False, 90, msg="the iPad's pairing state")
+        self.assertEqual(self.status()["device"]["udid"], UDID, "the Air stays on screen")
+        d = self.devices()
+        self.assertEqual((d[UDID]["paired"], d[UDID]["wifiSync"]), (True, True)); self.assertEqual(d[SECOND_UDID]["conn"], "usb")
+        # pairing and Wi-Fi sync act on the iPad while the Air is the chosen one
+        self.assertEqual(self.api.post("/api/wifi-sync", {"enable": True, "udid": SECOND_UDID})[0], 409, "needs a paired device")
+        code, j, _ = self.api.post("/api/pair", {"udid": SECOND_UDID}); self.assertEqual((code, j.get("ok")), (200, True), j)
+        wait_for(lambda: self.devices()[SECOND_UDID]["paired"] is True, 20, msg="the iPad is paired")
+        self.assertEqual(self.api.post("/api/pair", {"udid": UDID})[0], 409, "the Air is on Wi-Fi: pairing needs USB")
+        code, j, _ = self.api.post("/api/wifi-sync", {"enable": True, "udid": SECOND_UDID}); self.assertEqual((code, j.get("ok")), (200, True), j)
+        wait_for(lambda: self.devices()[SECOND_UDID]["wifiSync"] is True, 20, msg="Wi-Fi sync on the iPad")
+        self.assertEqual(self.status()["device"]["udid"], UDID, "nothing of this switched the page to the iPad")
+        # the probe answers about the device that was asked for
+        j = self.api.post("/api/probe", {"udid": SECOND_UDID})[1]
+        self.assertEqual(j["udid"], SECOND_UDID); self.assertIn(SECOND_UDID, j["usb"]); self.assertNotIn(SECOND_UDID, j["net"])
+        j = self.api.post("/api/probe", {"udid": UDID})[1]; self.assertIn(UDID, j["net"])
+        for path in ("/api/pair", "/api/wifi-sync", "/api/probe"):
+            self.assertEqual(self.api.post(path, {"udid": "00000000-0000000000000000"})[0], 404, path)
+        # an offline device has no pairing state to show
         self.phone(second=None)
-        wait_for(lambda: len(self.status()["devices"]) == 1, 20, msg="the iPad is unplugged")
-        self.assertEqual(self.status()["device"]["udid"], UDID)
-        self.phone(second={"conn": "usb", "name": "Sam’s iPad", "ptype": "iPad13,1"}, net=False)
-        wait_for(lambda: self.status()["device"]["udid"] == SECOND_UDID, 20, msg="fall back to the device that is left")
-        self.phone(second=None, net=True)
+        wait_for(lambda: self.devices()[SECOND_UDID]["conn"] is None, 25, msg="the iPad is unplugged")
+        self.assertIsNone(self.devices()[SECOND_UDID]["paired"])
+
+    def test_26_scan_for_new_devices(self):
+        self.folder(); self.phone(second=None)
+        wait_for(lambda: all(d["conn"] is None for u, d in self.devices().items() if u != UDID), 30, msg="the iPad is gone")
+        if SECOND_UDID in self.devices(): self.api.post("/api/forget", {"udid": SECOND_UDID}); wait_for(lambda: SECOND_UDID not in self.devices(), 20)
+        code, j, _ = self.api.post("/api/scan"); self.assertEqual(code, 200)
+        self.assertEqual((j["new"], j["restarted"], j["blocked"]), ([], False, False), "nothing new: no restart")
+        # an iPad that is on the USB bus but that usbmuxd2 does not list: the scan restarts usbmuxd2 and finds it
+        self.phone(second=dict(self.IPAD, paired=False, blind=True))
+        self.assertNotIn(SECOND_UDID, self.api.get("/api/status")[1]["device"]["usbIds"] + [d["udid"] for d in self.status()["devices"] if d["conn"]])
+        restarts = self.srv.phone_state().get("restarts", 0)
+        code, j, _ = self.api.post("/api/scan"); self.assertEqual(code, 200)
+        self.assertTrue(j["restarted"]); self.assertEqual(j["new"], [SECOND_UDID]); self.assertIn(SECOND_UDID, j["usb"]); self.assertGreater(self.srv.phone_state().get("restarts", 0), restarts)
+        wait_for(lambda: self.devices().get(SECOND_UDID, {}).get("paired") is False, 60, msg="the new device is listed, not paired")
+        self.assertEqual(self.devices()[SECOND_UDID]["name"], "", "a device that is not trusted yet does not tell its name")
+        self.assertEqual(self.api.post("/api/pair", {"udid": SECOND_UDID})[0], 200)
+        wait_for(lambda: self.devices()[SECOND_UDID]["name"] == "Sam’s iPad", 60, msg="the name after pairing")
+        j = self.api.post("/api/scan")[1]; self.assertEqual((j["new"], j["restarted"]), ([], False), "found once, not new any more")
+        self.assertEqual(self.status()["device"]["udid"], UDID, "a new device never takes over the page")
+        # while a task runs the USB service is left alone, because restarting it would cut the task
+        self.phone(second=None); wait_for(lambda: self.devices()[SECOND_UDID]["conn"] is None, 25)
+        self.phone(second=dict(self.IPAD, paired=False, blind=True), backup_seconds=15.0)
+        self.assertEqual(self.api.post("/api/backup")[0], 200); wait_for(lambda: self.status()["job"] is not None, 8, 0.1, msg="job")
+        restarts = self.srv.phone_state().get("restarts", 0)
+        j = self.api.post("/api/scan")[1]
+        self.assertEqual((j["blocked"], j["restarted"]), (True, False)); self.assertEqual(self.srv.phone_state().get("restarts", 0), restarts)
+        self.idle(); self.phone(second=None, backup_seconds=4.0)
 
     def test_99_state_survives_a_restart(self):
         self.folder()

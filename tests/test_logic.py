@@ -3,7 +3,7 @@
 
     python3 -I tests/test_logic.py
 """
-import collections, datetime as dt, importlib.util, os, sys, tempfile, unittest
+import collections, datetime as dt, importlib.util, os, plistlib, sys, tempfile, unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 spec = importlib.util.spec_from_file_location("server", os.path.join(HERE, "..", "app", "server.py"))
@@ -174,7 +174,7 @@ class SelfCheck(unittest.TestCase):
 class DevicePick(unittest.TestCase):
     A, B = "00008150-000B22C333D4E05F", "00008103-000A11B222C3D04E"
 
-    def test_default_is_usb_first_then_wifi(self):
+    def test_without_a_choice_it_is_usb_first_then_wifi(self):
         self.assertEqual(server.pick_device([], [], None), (None, None))
         self.assertEqual(server.pick_device([], [self.A], None), (self.A, "wifi"))
         self.assertEqual(server.pick_device([self.B], [self.A], None), (self.B, "usb"))
@@ -183,9 +183,27 @@ class DevicePick(unittest.TestCase):
         self.assertEqual(server.pick_device([self.B], [self.A], self.A), (self.A, "wifi"))
         self.assertEqual(server.pick_device([self.B, self.A], [self.A], self.A), (self.A, "usb"), "on both buses USB is used")
 
-    def test_a_missing_choice_falls_back_to_the_default(self):
-        self.assertEqual(server.pick_device([self.B], [], self.A), (self.B, "usb"))
-        self.assertEqual(server.pick_device([], [], self.A), (None, None))
+    def test_a_chosen_device_stays_chosen_while_it_is_offline(self):
+        self.assertEqual(server.pick_device([self.B], [], self.A), (self.A, None), "another device must not take over")
+        self.assertEqual(server.pick_device([], [], self.A), (self.A, None))
+
+    def test_pairing_records_seed_the_device_list_and_forgotten_ones_stay_out(self):
+        with tempfile.TemporaryDirectory() as t:
+            for n in (self.A + ".plist", self.B + ".plist", "SystemConfiguration.plist", "notes.txt"): open(os.path.join(t, n), "w").close()
+            server.LOCKDOWN_DIR = t; server.save_config = lambda: None
+            server.CONF.update(devices={}, forgotten=[self.B])
+            server.seed_devices()
+            self.assertEqual(sorted(server.CONF["devices"]), [self.A])
+
+
+    def test_an_offline_device_is_named_after_its_backup_folder(self):
+        with tempfile.TemporaryDirectory() as t:
+            u = self.B; os.makedirs(os.path.join(t, u))
+            with open(os.path.join(t, u, "Info.plist"), "wb") as f: plistlib.dump({"Device Name": "Sam’s iPad", "Product Type": "iPad13,1"}, f)
+            server.CONF["dirs"] = {u: t}; server.ROOTS = {"v": {"name": "v", "cpath": t, "host": "/h", "label": "x"}}
+            self.assertEqual(server.backup_identity(u), ("Sam’s iPad", "iPad13,1"))
+            self.assertEqual(server.backup_identity(self.A), (None, None), "no folder configured for this one")
+            os.remove(os.path.join(t, u, "Info.plist")); self.assertEqual(server.backup_identity(u), (None, None))
 
 
 class Helpers(unittest.TestCase):
@@ -200,6 +218,66 @@ class Helpers(unittest.TestCase):
         server.AUTH.update(secret="ab" * 32)
         tok = server.make_token(); self.assertTrue(server.check_token(tok)); self.assertFalse(server.check_token(tok[:-1] + "0")); self.assertFalse(server.check_token("1.x"))
         self.assertEqual(server.hash_pw("x", "cd" * 16), server.hash_pw("x", "cd" * 16)); self.assertNotEqual(server.hash_pw("x", "cd" * 16), server.hash_pw("y", "cd" * 16))
+
+
+class RegressionFixes(unittest.TestCase):
+    def test_refresh_does_not_mix_devices_after_selection_changes(self):
+        from unittest.mock import patch
+        with patch.object(server, "DEV", {"udid": "A", "name": "Phone A"}):
+            def query(*args):
+                server.DEV.update(udid="B", name="Phone B")
+                return {"DeviceName": "Phone A"}
+            with patch.object(server, "run", return_value=(0, b"")), patch.object(server, "query", side_effect=query):
+                server.refresh_info("A", False)
+            self.assertEqual(server.DEV, {"udid": "B", "name": "Phone B"})
+
+    def test_cleanup_requires_recorded_directory_identity(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as t:
+            root = os.path.join(t, "backups"); os.mkdir(root)
+            with patch.object(server, "STATE_DIR", t), patch.object(server, "ROOTS", {"v": {"cpath": root}}):
+                unrelated = os.path.join(root, "familyphotos.deleting-keep"); os.mkdir(unrelated)
+                target = os.path.join(root, U); os.mkdir(target)
+                trash = target + ".deleting-" + "a" * 32
+                record = server.record_deletion(target, trash)
+                os.rename(target, trash)
+                server.sweep_trash()
+                self.assertTrue(os.path.isdir(unrelated))
+                self.assertFalse(os.path.exists(trash))
+                self.assertFalse(os.path.exists(record))
+                # A replacement at the same path must not be removed.
+                os.mkdir(target)
+                record = server.record_deletion(target, trash)
+                os.rename(target, target + ".saved")
+                os.mkdir(trash)
+                server.sweep_trash()
+                self.assertTrue(os.path.isdir(trash))
+                self.assertTrue(os.path.exists(record))
+
+    def test_malformed_status_date_is_ignored(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as t:
+            os.mkdir(os.path.join(t, U))
+            with open(os.path.join(t, U, "Status.plist"), "wb") as f:
+                plistlib.dump({"Date": "broken", "SnapshotState": "finished"}, f)
+            with patch.object(server, "backup_dir", return_value=t):
+                self.assertIsNone(server.read_last(U)["ts"])
+
+    def test_job_lock_released_when_finalization_fails(self):
+        from unittest.mock import patch
+        import threading, time
+        for failure in ("metadata", "history"):
+            job = {"cancel": False, "way": "usb", "started": time.time()}
+            mutex = threading.Lock(); mutex.acquire()
+            with patch.object(server, "JOB", job), patch.object(server, "busy", mutex), patch.object(server, "HISTORY", []), patch.object(server, "RESULT", None), patch.object(server.subprocess, "Popen", side_effect=OSError("failed to start")), patch.object(server, "refresh_dirsize", return_value=0), patch.object(server, "read_last", side_effect=ValueError("bad metadata") if failure == "metadata" else None, return_value=None), patch.object(server, "save_history", side_effect=OSError("disk full") if failure == "history" else None):
+                if failure == "history":
+                    with self.assertRaises(OSError):
+                        server.run_backup([], U, "/tmp")
+                else:
+                    server.run_backup([], U, "/tmp")
+                    self.assertEqual(server.RESULT["status"], "failed")
+                self.assertIsNone(server.JOB)
+                self.assertFalse(mutex.locked())
 
 
 if __name__ == "__main__":

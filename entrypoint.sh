@@ -6,10 +6,15 @@ mkdir -p /var/lib/lockdown /var/run
 
 run_usbmuxd() {
   while true; do
-    echo "[entrypoint] starting usbmuxd2"
-    # usbmuxd2 runs in the foreground by default. Wi-Fi discovery uses the host avahi via /run/avahi-daemon/socket.
-    usbmuxd ${USBMUXD_ARGS:--v} || true
-    echo "[entrypoint] usbmuxd2 exited, restarting in 3s"
+    if [ "${USBMUXD_IMPLEMENTATION:-usbmuxd2}" = stock ]; then
+      echo "[entrypoint] starting standard USB transport"
+      /opt/usbmuxd-stock/sbin/usbmuxd --foreground --user root --config-dir /var/lib/lockdown || true
+    else
+      echo "[entrypoint] starting usbmuxd2"
+      # usbmuxd2 adds Wi-Fi discovery through the host avahi socket.
+      usbmuxd ${USBMUXD_ARGS:--v} || true
+    fi
+    echo "[entrypoint] USB transport exited, restarting in 3s"
     sleep 3
   done
 }

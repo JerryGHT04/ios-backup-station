@@ -41,7 +41,7 @@ SECOND_UDID = "00008103-000A11B222C3D04E"
 def second_visible(s, net):
     """The optional second device: s["second"] = {"conn": "usb" | "wifi", "name": ..., "ptype": ...}."""
     sec = s.get("second")
-    return bool(sec) and sec.get("conn") == ("wifi" if net else "usb")
+    return bool(sec) and sec.get("conn") == ("wifi" if net else "usb") and not (sec.get("blind") and not net)
 
 
 def target(a):
@@ -71,6 +71,8 @@ def tool_ideviceinfo(a, s):
             out_plist({"DeviceName": sec.get("name", "iPad"), "ProductType": sec.get("ptype", "iPad13,1"), "ProductVersion": "18.6"})
         elif dom == "com.apple.mobile.backup":
             out_plist({"WillEncrypt": True})
+        elif dom == "com.apple.mobile.wireless_lockdown":
+            out_plist({"EnableWifiConnections": bool(sec.get("wifi_sync", True))})
         else:
             out_plist({})
         return 0
@@ -95,7 +97,11 @@ def tool_ideviceinfo(a, s):
 def tool_idevicepair(a, s):
     cmd = "validate" if "validate" in a else ("pair" if "pair" in a else a[-1])   # options may come after the command
     if target(a) == SECOND_UDID:
-        if cmd == "validate" and second_visible(s, "-n" in a): print("SUCCESS: Validated pairing with device " + SECOND_UDID); return 0
+        sec = s.get("second") or {}
+        if cmd == "pair":
+            if not second_visible(s, False): print("ERROR: No device found"); return 1
+            sec["paired"] = True; s["second"] = sec; save(s); print("SUCCESS: Paired with device " + SECOND_UDID); return 0
+        if cmd == "validate" and second_visible(s, "-n" in a) and sec.get("paired", True): print("SUCCESS: Validated pairing with device " + SECOND_UDID); return 0
         print("ERROR: Device is not paired with this host"); return 1
     if cmd == "validate":
         if s["paired"]: print("SUCCESS: Validated pairing with device " + UDID); return 0
@@ -107,6 +113,12 @@ def tool_idevicepair(a, s):
 
 
 def tool_wifi_sync(a, s):
+    if a and a[0] == SECOND_UDID:
+        if not second_visible(s, False): print("ERROR: device not found over USB", file=sys.stderr); return 1
+        sec = s["second"]
+        if a[1] in ("on", "off"):
+            sec["wifi_sync"] = a[1] == "on"; save(s)
+        print("EnableWifiConnections=" + ("true" if sec.get("wifi_sync", True) else "false")); return 0
     if not (s["usb"] and not s["blind"]): print("ERROR: device not found over USB", file=sys.stderr); return 1
     if a[1] in ("on", "off"):
         s["wifi_sync"] = a[1] == "on"; save(s)
@@ -118,6 +130,7 @@ def tool_pkill(a, s):
         s["restarts"] += 1; s["restarting_until"] = time.time() + 2.5
         if s["restart_fixes"]:
             s["blind"] = False; s["net_blind"] = False
+            if s.get("second"): s["second"]["blind"] = False
         save(s)
     return 0
 
@@ -148,7 +161,10 @@ def tool_idevicebackup2(a, s):
     argv = a[:]
     s["last_argv"] = argv; save(s)
     net = "-n" in argv
-    if (net and (not s["net"] or s["net_blind"])) or (not net and not (s["usb"] and not s["blind"])):
+    if target(argv) == SECOND_UDID:
+        if not second_visible(s, net):
+            print("ERROR: No device found with udid %s." % SECOND_UDID); return 1
+    elif (net and (not s["net"] or s["net_blind"])) or (not net and not (s["usb"] and not s["blind"])):
         print("ERROR: No device found with udid %s." % UDID); return 1
     if "encryption" in argv:
         # Mirrors the real tool: the word after on/off is the password itself (not a backup folder). Without it the
@@ -167,9 +183,23 @@ def tool_idevicebackup2(a, s):
             if pw != s["backup_password"]:
                 print("Status     ErrorCode 207: Invalid password when restoring encrypted backup"); return 49
         s["enc"] = want; save(s); print("Backup encryption is now " + ("enabled" if want else "disabled")); return 0
+    if "restore" in argv:
+        print("Starting Restore...", flush=True)
+        print("Restoring system files: Yes", flush=True)
+        pw = os.environ.get("BACKUP_PASSWORD", "")
+        if s.get("enc") and pw != s.get("backup_password"):
+            print("ErrorCode 207: Invalid password when restoring encrypted backup", flush=True)
+            return 49
+        print("Sending example-file", flush=True)
+        time.sleep(float(s.get("restore_seconds", 1)))
+        if s.get("restore_fail"):
+            print("Restore Failed (Error Code 211).", flush=True)
+            return 45
+        print("Restore Successful.", flush=True)
+        return 0
     if "backup" not in argv:
         return 2
-    dest = os.path.join(argv[-1], UDID); os.makedirs(dest, exist_ok=True)
+    dest = os.path.join(argv[-1], target(argv)); os.makedirs(dest, exist_ok=True)
     state = {"abort": False}
     signal.signal(signal.SIGINT, lambda *x: state.update(abort=True))
     signal.signal(signal.SIGTERM, lambda *x: state.update(abort=True))

@@ -1,0 +1,3 @@
+# Isolated GPL-3.0 restore worker; see LICENSE.restore and THIRD_PARTY_NOTICES.md.
+pymobiledevice3==11.49.0
+pyiosbackup==0.2.4

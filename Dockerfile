@@ -39,6 +39,15 @@ RUN set -eux; \
     build_full libgeneral     https://github.com/tihmstar/libgeneral.git; \
     build_clang usbmuxd2      https://github.com/tihmstar/usbmuxd2.git
 
+# Keep the standard USB transport alongside usbmuxd2 for controlled restore comparisons.
+# A separate prefix preserves the existing Wi-Fi-capable daemon.
+ARG USBMUXD_STOCK_REV=3ded00c9985a5108cfc7591a309f9a23d57a8cba
+RUN git clone --depth 1 https://github.com/libimobiledevice/usbmuxd.git usbmuxd-stock \
+ && cd usbmuxd-stock && git checkout "$USBMUXD_STOCK_REV" \
+ && ./autogen.sh --prefix=/opt/usbmuxd-stock --without-systemd \
+ && make -j"$(nproc)" && make install \
+ && echo "usbmuxd-stock $(git rev-parse --short HEAD)" >> /usr/local/share/build-revisions.txt
+
 # Tiny helper to toggle "sync over Wi-Fi" on the phone (not available in the stock CLI tools).
 COPY tools/wifi_sync.c /src/wifi_sync.c
 RUN gcc -O2 -o /usr/local/bin/wifi-sync /src/wifi_sync.c $(pkg-config --cflags --libs libimobiledevice-1.0 libplist-2.0)
@@ -50,9 +59,14 @@ ARG APT_MIRROR=
 RUN if [ -n "$APT_MIRROR" ]; then sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; fi
 RUN apt-get update && apt-get install -y --no-install-recommends \
       libusb-1.0-0 libavahi-client3 libssl3t64 libreadline8t64 libcurl4t64 \
-      python3 ca-certificates tzdata procps avahi-utils \
+      python3 python3-venv ca-certificates tzdata procps avahi-utils \
  && rm -rf /var/lib/apt/lists/*
+COPY requirements-restore.txt /tmp/requirements-restore.txt
+RUN python3 -m venv /opt/restore \
+ && /opt/restore/bin/pip install --no-cache-dir -r /tmp/requirements-restore.txt \
+ && /opt/restore/bin/python -c "from pymobiledevice3.services.mobilebackup2 import Mobilebackup2Service; from pyiosbackup.keybag import Keybag"
 COPY --from=build /usr/local /usr/local
+COPY --from=build /opt/usbmuxd-stock /opt/usbmuxd-stock
 RUN echo /usr/local/lib > /etc/ld.so.conf.d/local.conf && ldconfig
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

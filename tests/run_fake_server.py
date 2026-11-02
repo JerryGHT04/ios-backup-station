@@ -33,7 +33,7 @@ server.STATE_DIR = os.path.join(work, "config")
 server.HIST_FILE = os.path.join(server.STATE_DIR, "history.json")
 server.CONF_FILE = os.path.join(server.STATE_DIR, "settings.json")
 server.AUTH_FILE = os.path.join(server.STATE_DIR, "auth.json")
-server.apple_usb_present = lambda: bool(phone().get("usb"))                      # stands in for /sys/bus/usb
+server.apple_usb_count = lambda: int(bool(phone().get("usb"))) + int((phone().get("second") or {}).get("conn") == "usb")                      # stands in for /sys/bus/usb
 server.tcp_open = lambda ip, port=62078, timeout=2.0: bool(phone().get("net"))   # the fake IP is not reachable
 os.makedirs(server.STATE_DIR, exist_ok=True)
 server.load_history(); server.load_config(); server.load_auth()
