@@ -219,6 +219,40 @@ class RestoreConfirmationTests(unittest.TestCase):
         self.assertIn("待确认", payload["error"])
 
 
+class UsbMuxModeTests(unittest.TestCase):
+    def test_switch_to_stock_waits_for_requested_usb_device(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            mode_file = Path(tmp) / "mode"
+            running_file = Path(tmp) / "running"
+
+            def fake_run(argv, **kwargs):
+                if argv[:2] == ["pkill", "-x"]:
+                    running_file.write_text("stock\n")
+                    return 0, b""
+                if argv[:2] == ["pgrep", "-x"]:
+                    return 0, b"123\n"
+                return 1, b""
+
+            with patch.object(server, "USBMUXD_MODE_FILE", str(mode_file)), \
+                 patch.object(server, "USBMUXD_RUNNING_FILE", str(running_file)), \
+                 patch.object(server, "run", side_effect=fake_run), \
+                 patch.object(server, "list_ids", return_value=[UDID]), \
+                 patch.object(server.time, "sleep"):
+                self.assertTrue(server.switch_usbmuxd_mode("stock", udid=UDID))
+            self.assertEqual(mode_file.read_text().strip(), "stock")
+
+    def test_restore_finalizer_returns_transport_to_wifi_daemon(self):
+        job = {"started": 0, "cancel": True, "status": "cancelled", "protocolComplete": False,
+               "restoreOutcome": None, "encrypted": True, "msg": "", "bytes": None}
+        program = "import sys; sys.stdin.readline(); sys.exit(1)"
+        with patch.object(server, "JOB", job), patch.object(server, "HISTORY", []), \
+             patch.object(server, "save_history"), patch.object(server, "to_host", return_value="/backup"), \
+             patch.object(server, "switch_usbmuxd_mode", return_value=True) as switch, \
+             contextlib.redirect_stdout(io.StringIO()):
+            server.run_restore([sys.executable, "-c", program], UDID, "/backup", "secret")
+        switch.assert_called_once_with("usbmuxd2")
+
+
 class ValidationTests(unittest.TestCase):
     def test_real_encrypted_manifest_accepts_correct_password_rejects_wrong_one(self):
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -306,7 +340,9 @@ class ValidationTests(unittest.TestCase):
                 "print(%r, flush=True)" % json.dumps(e) for e in events] + ["sys.exit(%d)" % code])
             with self.subTest(expected=expected, code=code), patch.object(server, "JOB", job), \
                  patch.object(server, "HISTORY", []), patch.object(server, "save_history"), \
-                 patch.object(server, "to_host", return_value="/backup"), contextlib.redirect_stdout(io.StringIO()):
+                 patch.object(server, "to_host", return_value="/backup"), \
+                 patch.object(server, "switch_usbmuxd_mode", return_value=True), \
+                 contextlib.redirect_stdout(io.StringIO()):
                 server.run_restore([sys.executable, "-c", program], UDID, "/backup", "secret")
                 self.assertEqual(server.RESULT["status"], expected)
 

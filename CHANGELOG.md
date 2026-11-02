@@ -11,3 +11,4 @@ Notable changes to this project are recorded here. The repository did not previo
 - Marked direct NAS restore as experimental in the app and documented the limited device testing and manual success-confirmation step.
 - Invited users to report their device model, iOS version, and restore result to help validate more configurations.
 - Prevented the device-discovery watchdog from repeatedly restarting stock USB-only usbmuxd when a phone is reachable over Wi-Fi but is not enumerated by USB transport; kept cable-to-Wi-Fi fallback quick and applied cooldowns only after a restart actually succeeds.
+- Kept Wi-Fi-capable usbmuxd2 active during normal use and switched to stock USB-only usbmuxd only for the duration of a direct restore, automatically returning to Wi-Fi discovery after completion, failure, or cancellation.

@@ -286,6 +286,8 @@ How restore works: the restore worker runs on the NAS, while Apple's BackupAgent
 
 Direct restore runs an isolated MobileBackup2 protocol worker and keeps per-attempt diagnostics in the configuration directory under `restore-logs/`. The page shows sent bytes and estimated total and remaining time based on measured transfer speed; these are approximate and may change while the phone processes data or restarts. See [Restore engine](docs/restore-engine.md).
 
+During normal use, `usbmuxd2` stays active so the NAS can discover devices over Wi-Fi. Only while a direct restore is running, the service temporarily switches to the standard USB-only `usbmuxd`; after the restore ends, including cancellation or failure, it automatically switches back to `usbmuxd2` so Wi-Fi discovery resumes.
+
 If direct restore does not work, use Apple Devices, iTunes, or Finder as described below:
 
 **Windows (the Apple Devices app, or iTunes from the Microsoft Store)**

@@ -25,6 +25,8 @@ from urllib.parse import parse_qs, urlsplit
 
 PORT = int(os.environ.get("PORT", "8899"))
 STATE_DIR = os.environ.get("STATE_DIR", "/config")
+USBMUXD_MODE_FILE = "/run/ios-backup-station-usbmuxd.mode"
+USBMUXD_RUNNING_FILE = "/run/ios-backup-station-usbmuxd.running"
 HIST_FILE = os.path.join(STATE_DIR, "history.json")
 CONF_FILE = os.path.join(STATE_DIR, "settings.json")
 AUTH_FILE = os.path.join(STATE_DIR, "auth.json")
@@ -81,6 +83,59 @@ def run(argv, env=None, timeout=15):
         return 124, b""
     except FileNotFoundError:
         return 127, b""
+
+
+def usbmuxd_mode():
+    """Return the daemon mode currently reported by the entrypoint supervisor."""
+    try:
+        with open(USBMUXD_RUNNING_FILE, encoding="ascii") as f:
+            mode = f.read(32).strip()
+        return mode if mode in ("stock", "usbmuxd2") else "usbmuxd2"
+    except OSError:
+        return "usbmuxd2"
+
+
+def switch_usbmuxd_mode(mode, udid=None, timeout=30.0):
+    """Switch daemons between Wi-Fi-capable idle mode and USB-only restore mode.
+
+    Only called while the task lock is held, either before a restore starts or
+    after its worker exits, so killing usbmuxd cannot interrupt another job.
+    """
+    if mode not in ("stock", "usbmuxd2"):
+        raise ValueError("invalid usbmuxd mode")
+    try:
+        if usbmuxd_mode() == mode:
+            rc, pids = run(["pgrep", "-x", "usbmuxd"])
+            if rc == 0 and pids.strip() and (udid is None or udid in list_ids(False)):
+                return True
+        temp = USBMUXD_MODE_FILE + ".tmp"
+        with open(temp, "w", encoding="ascii") as f:
+            f.write(mode + "\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp, USBMUXD_MODE_FILE)
+        # Invalidate the previous daemon's marker before signaling it. This
+        # prevents a still-exiting daemon (and its stale device listing) from
+        # being mistaken for the requested transport.
+        try:
+            os.unlink(USBMUXD_RUNNING_FILE)
+        except FileNotFoundError:
+            pass
+    except OSError as e:
+        log("cannot request usbmuxd mode %s: %s" % (mode, e))
+        return False
+
+    run(["pkill", "-x", "usbmuxd"])
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if usbmuxd_mode() == mode:
+            rc, pids = run(["pgrep", "-x", "usbmuxd"])
+            if rc == 0 and pids.strip() and (udid is None or udid in list_ids(False)):
+                log("USB transport switched to %s" % mode)
+                return True
+        time.sleep(0.25)
+    log("timed out switching USB transport to %s" % mode)
+    return False
 
 
 # ---------------------------------------------------------------- folders / settings
@@ -587,7 +642,7 @@ def poller():
             # phone switches band / network it can stay unlisted although it is reachable. Restart usbmuxd2.
             # The stock usbmuxd only handles USB. A Wi-Fi-reachable phone that it cannot list is
             # expected in this mode; restarting usbmuxd in response just creates a restart loop.
-            if os.environ.get("USBMUXD_IMPLEMENTATION", "usbmuxd2") != "stock" and not (usb or net) and not running:
+            if usbmuxd_mode() != "stock" and not busy.locked() and not (usb or net) and not running:
                 ips = [ip for ip in mdns_phone_ips() if tcp_open(ip)]
                 now = time.time()
                 quick = unplugged_at is not None and now - unplugged_at < 20
@@ -769,9 +824,13 @@ def start_restore(data):
     if not busy.acquire(blocking=False):
         return 409, {"error": "已有任务在运行"}
     try:
+        if not switch_usbmuxd_mode("stock", udid=udid):
+            switch_usbmuxd_mode("usbmuxd2")
+            raise RuntimeError("恢复所需的 USB 服务未能启动")
         _launch_restore(d, base, password, meta)
         return 200, {"ok": True}
     except Exception as e:
+        switch_usbmuxd_mode("usbmuxd2")
         global_reset_job()
         log("could not start restore: %r" % e)
         return 500, {"error": "无法开始恢复：%s" % e.__class__.__name__}
@@ -980,6 +1039,11 @@ def run_restore(argv, udid, base, password):
             log("cannot save restore result: %r" % e)
         with lock:
             JOB = None
+        try:
+            if not switch_usbmuxd_mode("usbmuxd2"):
+                log("could not return USB transport to usbmuxd2 after restore")
+        except Exception as e:
+            log("could not return USB transport to usbmuxd2 after restore: %r" % e)
         if busy.locked():
             busy.release()
 
@@ -1418,7 +1482,7 @@ def do_probe(udid=None):
     usb, net = list_ids(False), list_ids(True)
     restarted = False
     if (not usb and not net and JOB is None
-            and os.environ.get("USBMUXD_IMPLEMENTATION", "usbmuxd2") != "stock"):
+            and usbmuxd_mode() != "stock"):
         ips = [ip for ip in mdns_phone_ips() if tcp_open(ip)]
         if ips:
             restarted = restart_usbmuxd("probe: phone is reachable at %s but usbmuxd2 does not list it" % ips[0])

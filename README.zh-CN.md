@@ -284,6 +284,8 @@ usbmuxd2 有时不会重新发现设备，所以服务里有两个“看门狗�
 
 直连恢复使用独立的 MobileBackup2 协议进程；页面显示发送字节数、预计总时长和剩余时长。时长会根据实际传输速度估算，属于近似值；手机处理或重启时可能暂时没有传输活动，估算也可能变化。每次尝试的诊断保存在配置目录的 `restore-logs/`，实现细节见 [恢复引擎](docs/restore-engine.md)。
 
+平时服务会保持 `usbmuxd2` 运行，以便通过 Wi-Fi 发现设备。只有 NAS 正在执行直连恢复时，才会临时切换到标准的 USB 专用 `usbmuxd`；恢复结束后（包括取消或失败）会自动切回 `usbmuxd2`，恢复无线发现。
+
 如果直连恢复不成功，可以按下面的方法用 Apple 设备、iTunes 或 Finder 恢复：
 
 **Windows（“Apple 设备”应用，或 Microsoft Store 版 iTunes）**
