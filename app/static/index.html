@@ -615,7 +615,6 @@ details.faq .fb p{margin:8px 0}
         return onNet?(j.restarted?'已重新连接，通过无线找到手机':'已通过无线找到手机'):(onUsb?'只通过 USB 找到，没有无线信号':'没有找到这台设备')})});
       if(connOut[x.udid]){var o=document.createElement('span');o.className='pill '+(connOut[x.udid].cls||'mute');o.textContent=connOut[x.udid].t;ca.appendChild(o)}
       c.appendChild(ca);
-      if(!online){var n=document.createElement('div');n.className='cn';n.textContent='用 USB 线接到 NAS 并解锁设备，这张卡片会自动更新。';c.appendChild(n)}
       box.appendChild(c);
     });
   }
