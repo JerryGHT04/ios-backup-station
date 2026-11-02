@@ -349,19 +349,30 @@ Please report security problems through an issue; for a serious vulnerability, c
 
 ## 11. How it compares
 
-This table is my reading of the public pages, not a hands-on comparison; corrections are welcome.
+This comparison summarizes each project's current public documentation; **we have not installed and tested the other projects feature by feature**. Features and licensing can change, so check the linked project pages. Wi-Fi sync and backup are different: Apple's Wi-Fi sync documentation describes syncing content between a computer and a device, not a NAS-scheduled backup.
 
-| | ios-backup-station | iTunes/Finder wireless sync | [AirVault](https://ca.unraid.net/apps/airvault-1wgjo0w039uoj0) | [iosbackup](https://www.v2ex.com/t/1139025) |
+| | ios-backup-station | iTunes / Finder / Apple Devices | [AirVault](https://github.com/wizier/airvault) | [iosbackup](https://github.com/razeencheng/iosbackup) |
 |---|---|---|---|---|
-| Where backups go | Your NAS | A computer | Your NAS (Unraid template) | Your NAS |
-| Needs a computer left on | No | Yes | No | No |
-| Open source | Yes (MIT) | No | No (free for personal use, commercial use needs a license) | See its page |
-| Web interface | Desktop and phone layouts, iPad | n/a | Yes | See its page |
-| Scheduled backups | Yes (started by the NAS, retries inside a window) | Automatically while charging | See its page | Triggered when the phone joins Wi-Fi |
-| Backup format | iTunes layout | iTunes layout | See its page | See its page |
-| Setup check, automated tests | Yes | n/a | n/a | n/a |
+| Backup storage | A NAS folder you choose; whole-device backup in an iTunes-compatible layout | Local computer | Local NAS directory; an Unraid app template is available | A chosen directory on Linux or NAS |
+| Computer needed day to day | No; the NAS runs the service | Managed by a computer app; the computer must be on for Wi-Fi sync | No | No |
+| Connection | USB or Wi-Fi backup; direct restore from NAS currently uses USB | USB; Wi-Fi sync must first be enabled from the computer | USB or Wi-Fi | USB or Wi-Fi |
+| Backup trigger | Start from the web UI or schedule the NAS to connect and retry within a time window | Start backup from the computer app; Wi-Fi sync of content can start automatically when the device is charging and the computer is on the same Wi-Fi | Automatic backup windows; see project docs | Manual or per-device schedules with time windows, battery, and charging conditions |
+| Backup history | Shows task records; does not offer selectable historical restore points. Use NAS snapshots if you need retained versions | Managed by the computer's device-backup interface | Incremental, versioned backups with selectable restore points | Public docs describe status and file listing; check project docs for retention behavior |
+| Encryption | Supports encrypted iOS backups; the backup password is not stored on the NAS | Supports encrypted local backups | Optional backup encryption | Supports backup encryption and password management |
+| Restore | Direct restore from NAS to the original device is **experimental**; alternatively copy the backup to a computer and restore with Apple software | Restore from a backup stored on the computer | Web UI supports restore and choosing a restore point | Whole-device restore is marked experimental and disabled by default; Apple Devices, iTunes, or Finder can also be used |
+| Web and management | Desktop, phone, and iPad web UI; setup checks, progress, and task history | No NAS web-management UI | Web UI; Unraid app template | Web UI; backup status, stages, file listing, and optional notifications |
+| Open-source license | MIT | Proprietary Apple software | GPL-3.0-or-later | AGPL-3.0-only |
+| Platform and validation | Docker; direct NAS restore tested on iPhone 15 with iOS 27.0 | Apple Devices / iTunes on Windows, or Finder on macOS | Docker, with an Unraid template; project lists amd64 and arm64 | Linux / NAS Docker; project lists amd64 and arm64 |
 
-Reasons to pick this one: open source, one-command setup on a NAS, a format iTunes can restore, a self-check. **Reasons to pick another**: if you want something more mature and widely used, or you run Unraid, AirVault may be easier.
+### Choosing between them
+
+- **For NAS-managed backups and a browser interface:** both ios-backup-station and iosbackup support USB/Wi-Fi and NAS-scheduled jobs. ios-backup-station's scheduler connects from the NAS at the configured time; iosbackup also documents battery, charging, and time-window conditions plus optional notifications.
+- **For retained versions and choosing a restore point:** AirVault documents incremental, versioned backups and selectable restore points. ios-backup-station records task results but does not currently expose historical backup snapshots; NAS filesystem snapshots can be configured separately.
+- **For Apple's familiar workflow or computer-local backups:** use Apple Devices, iTunes, or Finder. Backups live on the computer; Wi-Fi sync requires the computer to be on and on the same Wi-Fi. Apple's guide says to enable Wi-Fi sync from the computer first; this does not provide the same NAS-initiated schedule as the NAS tools above.
+- **For restoring directly from a NAS web UI:** ios-backup-station has USB direct restore, labeled experimental. So far we have completed a restore of an approximately 123.6 GiB encrypted backup on iPhone 15 (iOS 27.0), reaching the home screen; after the phone restarts, the result still needs manual checking and confirmation. iosbackup also lists whole-device restore as experimental and disabled by default; AirVault documents web restore and restore-point selection.
+- **For an Unraid-specific installer:** AirVault offers an Unraid Community Apps template. Other NAS/Linux hosts can also use Docker, following the relevant project instructions.
+
+Our tradeoff is an MIT-licensed NAS web app with an iTunes-compatible backup, scheduled tasks, setup checks, and a newly tested direct-restore path. It does not yet provide AirVault's documented versioned restore points, and direct restore still needs community testing across more devices and iOS versions. This summary is based on the [AirVault project page](https://github.com/wizier/airvault), [iosbackup documentation](https://github.com/razeencheng/iosbackup), and [Apple's Wi-Fi sync guide](https://support.apple.com/en-sg/guide/itunes/itns3751d862/windows); it is not a same-conditions performance or reliability benchmark.
 
 ## 12. How it works
 
