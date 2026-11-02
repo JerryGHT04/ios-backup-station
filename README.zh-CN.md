@@ -347,19 +347,30 @@ docker rmi ios-backup-station    # 删除镜像（可选）
 
 ## 11. 和同类方案的区别
 
-下表只是我对公开介绍页的理解，没有逐项试用；如有不准确欢迎指正。
+下面按各项目当前公开的说明整理，**没有对其他项目逐项安装和实测**。功能和授权可能更新，请以各自项目页为准。这里把“无线同步”和“备份”分开说明：Apple 文档里的 Wi-Fi 同步主要指电脑与设备同步内容，不等同于 NAS 定时备份。
 
-| | ios-backup-station | iTunes/Finder 无线同步 | [AirVault](https://ca.unraid.net/apps/airvault-1wgjo0w039uoj0) | [iosbackup](https://www.v2ex.com/t/1139025) |
+| 对比项 | ios-backup-station | iTunes / Finder / Apple Devices | [AirVault](https://github.com/wizier/airvault) | [iosbackup](https://github.com/razeencheng/iosbackup) |
 |---|---|---|---|---|
-| 备份位置 | 你的 NAS | 电脑 | 你的 NAS（Unraid 模板） | 你的 NAS |
-| 需要电脑一直开着 | 否 | 是 | 否 | 否 |
-| 开源 | 是（MIT） | 否 | 否（个人免费，商用需授权） | 以其介绍为准 |
-| 网页界面 | 电脑版和手机版，iPad | — | 有 | 以其介绍为准 |
-| 定时备份 | 有（NAS 主动发起，时间窗口重试） | 手机充电时自动 | 以其介绍为准 | 手机进入 Wi-Fi 时触发 |
-| 备份格式 | iTunes 格式 | iTunes 格式 | 以其介绍为准 | 以其介绍为准 |
-| 自带自检、自动化测试 | 有 | — | — | — |
+| 备份存放 | 你选择的 NAS 目录；按设备保存 iTunes 兼容的整机备份 | 电脑本地 | NAS 本地目录；面向 Unraid 的应用模板也可用 | Linux 主机或 NAS 上的指定目录 |
+| 日常是否需要电脑 | 不需要；NAS 运行服务即可 | 需要由电脑端应用管理；无线连接时电脑必须开机 | 不需要 | 不需要 |
+| 连接方式 | USB 或 Wi-Fi 备份；从 NAS 直连恢复目前走 USB | USB；也可先用 USB 开启 Wi-Fi 同步 | USB 或 Wi-Fi | USB 或 Wi-Fi |
+| 备份触发 | 页面手动发起；也可设置 NAS 定时主动连接，并在时间窗口内重试 | 在电脑端发起备份；Wi-Fi 同步可在设备接电、电脑开机且同一 Wi-Fi 时自动开始同步内容 | 支持自动备份窗口；详见项目说明 | 手动或按设备设置计划、时间段、电量和充电条件 |
+| 历史版本 | 页面记录任务；不提供可选择的历史恢复点。需要多版本时可配合 NAS 快照 | 由电脑端的设备备份管理 | 增量、版本化备份，可选恢复点 | 公开说明提供备份状态和文件列表；版本保留策略请查项目文档 |
+| 加密 | 支持 iOS 加密备份；备份密码不保存在 NAS | 支持加密本地备份 | 支持可选备份加密 | 支持备份加密及密码管理 |
+| 恢复 | 可从 NAS 直接恢复到原设备，**实验功能**；也可复制备份到电脑用 Apple 软件恢复 | 从电脑上的备份恢复 | 网页界面提供恢复和恢复点选择 | 整机恢复仍标为实验功能，默认关闭；也可使用 Apple Devices、iTunes 或 Finder |
+| 网页与管理 | 桌面、手机和 iPad 网页界面；环境自检、进度和任务记录 | 没有 NAS 网页管理界面 | 网页界面；Unraid 模板部署 | 网页管理；备份状态、阶段和文件列表，并可选配置通知 |
+| 开源授权 | MIT | Apple 专有软件 | GPL-3.0-or-later | AGPL-3.0-only |
+| 兼容与验证 | Docker；目前 NAS 直连恢复实测为 iPhone 15、iOS 27.0 | Windows 上的 Apple Devices / iTunes，或 macOS Finder | Docker，面向 Unraid；项目列出 amd64、arm64 | Linux / NAS Docker，项目列出 amd64、arm64 |
 
-选它的理由主要是：开源、能在 NAS 上一键部署、iTunes 能恢复的格式、有自检。**选别的方案的理由**：如果你要的是更成熟、更多人用的方案，或者你用 Unraid，AirVault 可能更省事。
+### 怎么选
+
+- **想让 NAS 自己保存和定时创建备份，并通过浏览器管理**：ios-backup-station 或 iosbackup 都支持 USB / Wi-Fi 和 NAS 定时任务。ios-backup-station 的定时任务由 NAS 按设定的时间主动连接设备；iosbackup 还公开列出了按电量、充电状态和时间段控制任务，以及可选通知。
+- **更看重多版本留存和从不同时间点恢复**：AirVault 的公开说明列出增量、版本化备份和恢复点选择。ios-backup-station 目前的网页记录的是任务结果，不是可切换的历史备份快照；可以在 NAS 文件系统层另行配置快照。
+- **习惯用苹果官方界面恢复，或者要从电脑备份**：使用 Apple Devices、iTunes 或 Finder。备份保存在电脑；无线同步需要电脑开机并在同一 Wi-Fi。Apple 文档要求先在电脑端为设备启用 Wi-Fi 同步；NAS 直连恢复不能用这条无线同步链路替代。
+- **希望从 NAS 网页直接恢复**：ios-backup-station 已加入 USB 直连恢复，但仍是实验功能。目前仅有 iPhone 15（iOS 27.0）完整恢复约 123.6 GiB 加密备份并进入主屏幕的实测；手机重启后还需要手动检查并确认结果。iosbackup 也把整机恢复列为默认关闭的实验功能；AirVault 的公开说明列出网页恢复和版本点选择。
+- **部署平台是 Unraid**：AirVault 提供 Unraid 社区应用模板；其他 NAS/Linux 也可用 Docker，但安装方式要按对应文档配置。
+
+本项目的取舍是：提供 MIT 开源的 NAS 网页管理、iTunes 兼容备份、计划任务、自检，以及刚开始实测的 NAS 直连恢复。它还没有 AirVault 所列的版本化恢复点；恢复支持的设备和系统版本也需要社区继续测试。竞品功能依据其[项目说明](https://github.com/wizier/airvault)、[iosbackup 文档](https://github.com/razeencheng/iosbackup)和 [Apple Wi-Fi 同步指南](https://support.apple.com/en-sg/guide/itunes/itns3751d862/windows)整理，未进行同条件性能或可靠性对测。
 
 ## 12. 工作原理
 
