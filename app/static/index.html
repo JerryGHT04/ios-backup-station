@@ -446,8 +446,7 @@ details.faq .fb p{margin:8px 0}
   }
   function pad(n){return n<10?'0'+n:''+n}
   function fmtTime(ts){if(!ts)return '—';var d=new Date(ts*1000);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
-  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return (i>=3?n.toFixed(1):Math.round(n))+' '+u[i]}
-  function fmtDec(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1000&&i<4){n/=1000;i++}return (i>=3?n.toFixed(i===4?2:(n<100?1:0)):Math.round(n))+' '+u[i]}
+  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1000&&i<4){n/=1000;i++}return (i>=3?n.toFixed(i===4?2:(n<100?1:0)):Math.round(n))+' '+u[i]}
   function fmtSpeed(n){return n==null?'':(n>=1e6?(n/1e6).toFixed(1)+' MB/s':Math.round(n/1e3)+' KB/s')}
   function fmtDur(s){if(s==null)return '—';var h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return h?h+':'+pad(m)+':'+pad(x):m+':'+pad(x)}
   function connLabel(c){return c==='usb'?'USB':(c==='wifi'?'无线':'—')}
@@ -501,7 +500,7 @@ details.faq .fb p{margin:8px 0}
     $('#hVer').textContent=d.connected?(d.version?'iOS '+d.version:'\u00a0'):('未连接'+(last&&last.ts?' · 最近备份 '+fmtTime(last.ts):''));
     $('#kvUdid').textContent=d.udid||'—';
     $('#kvConn').textContent=d.connected?connLabel(d.conn)+(d.paired?'（已信任）':'（未配对）'):'未连接';
-    $('#kvCap').textContent=d.capacity?fmtDec(d.capacity)+(d.free!=null?'，可用 '+fmtDec(d.free):''):'—';
+    $('#kvCap').textContent=d.capacity?fmtBytes(d.capacity)+(d.free!=null?'，可用 '+fmtBytes(d.free):''):'—';
     $('#destPath').textContent=S.config.dir||'尚未选择';$('#pickBtn').disabled=running||!d.connected;
     var kind=/^iPad/.test(d.ptype||'')?'iPad':'iPhone';
 

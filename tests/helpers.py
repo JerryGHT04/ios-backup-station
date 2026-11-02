@@ -11,17 +11,20 @@ def free_port():
 
 
 class Server:
-    def __init__(self, work=None, keep=False):
+    def __init__(self, work=None, keep=False, env=None):
         self.work = work or tempfile.mkdtemp(prefix="ibs-test-")
         self.keep = keep
         self.port = free_port()
+        self.env = dict(os.environ, **(env or {}))
         self.proc = None
         self.logf = None
 
     def start(self):
+        if self.logf and not self.logf.closed:
+            self.logf.close()
         self.logf = open(os.path.join(self.work, "server.log"), "ab")
         self.proc = subprocess.Popen([sys.executable, "-I", os.path.join(HERE, "run_fake_server.py"), str(self.port), self.work],
-                                     stdout=self.logf, stderr=subprocess.STDOUT)
+                                     stdout=self.logf, stderr=subprocess.STDOUT, env=self.env)
         for _ in range(100):
             try:
                 socket.create_connection(("127.0.0.1", self.port), 0.2).close(); return self

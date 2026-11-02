@@ -207,7 +207,7 @@ pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-h
   function estimateDur(s){if(s==null)return L('总时长计算中','estimating total time');var m=Math.max(1,Math.round(s/60));if(m>15)m=Math.round(m/5)*5;return m>=60?L(Math.floor(m/60)+' 小时'+(m%60?' '+m%60+' 分钟':''),Math.floor(m/60)+' h'+(m%60?' '+m%60+' min':'')):L(m+' 分钟',m+' min')}
   function fmtTime(ts){if(!ts)return '—';var d=new Date(ts*1000);return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+pad(d.getHours())+':'+pad(d.getMinutes())}
   function fmtSpeed(n){return n==null?'':(n>=1e6?(n/1e6).toFixed(1)+' MB/s':Math.round(n/1e3)+' KB/s')}
-  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1024&&i<4){n/=1024;i++}return (i>=3?n.toFixed(1):Math.round(n))+' '+u[i]}
+  function fmtBytes(n){if(n==null)return '—';var u=['B','KB','MB','GB','TB'],i=0;while(n>=1000&&i<4){n/=1000;i++}return (i>=3?n.toFixed(i===4?2:(n<100?1:0)):Math.round(n))+' '+u[i]}
 
   /* ---- 语言：默认跟随浏览器，选择后记住 ---- */
   var LANG=(function(){try{var v=localStorage.getItem('ib_lang');if(v==='zh'||v==='en')return v}catch(e){}return /^zh/i.test(navigator.language||'')?'zh':'en'})();
@@ -236,10 +236,10 @@ pre.log{margin:0;padding:13px 15px;font-family:var(--mono);font-size:12px;line-h
     '正在发送恢复数据':'Sending restore data','数据传输完成，等待手机处理':'Transfer complete; waiting for the device',
     '准备恢复':'Preparing restore'};
   var ERRP={'这个文件夹不能写入：':'This folder is not writable: ','无法读取这个文件夹：':'Cannot read this folder: ','无法新建：':'Cannot create it: '};
-  function tr(m){if(LANG!=='en'||!m)return m;if(ERR[m])return ERR[m];for(var k in ERRP){if(m.indexOf(k)===0)return ERRP[k]+m.slice(k.length)}return m}
+  function tr(m){if(LANG!=='en'||!m)return m;if(ERR[m])return ERR[m];var cd=m.match(/^手机刚取消备份，正在结束上一次操作。请保持解锁并等待约 (\d+) 秒后重试；若仍失败，请重新连接 USB。$/);if(cd)return 'The device is finishing the cancelled backup. Keep it unlocked and retry in about '+cd[1]+' seconds; reconnect USB if it still fails.';for(var k in ERRP){if(m.indexOf(k)===0)return ERRP[k]+m.slice(k.length)}return m}
   function zhMsg(m){
     if(!m)return '';
-    var t=[[/waiting for passcode/i,'请在手机上输入锁屏密码…','Enter the passcode on the device…'],[/receiving files/i,'正在接收文件。','Receiving files.'],[/sending files/i,'正在发送文件。','Sending files.'],
+    var t=[[/如已输入锁屏密码/,'如已输入锁屏密码，手机正在准备备份；如未输入，请先解锁手机','If you entered the passcode, the device is preparing the backup; otherwise, unlock it.'],[/waiting for passcode/i,'请在手机上输入锁屏密码…','Enter the passcode on the device…'],[/receiving files/i,'正在接收文件。','Receiving files.'],[/sending files/i,'正在发送文件。','Sending files.'],
       [/requesting backup/i,'正在向手机请求备份…','Requesting backup…'],[/will be encrypted/i,'备份将被加密。','The backup will be encrypted.'],[/incremental backup/i,'增量备份：只传变化的文件。','Incremental backup: only changes are sent.'],
       [/full backup/i,'完整备份。','Full backup.'],[/preparing|starting/i,'正在准备…','Preparing…']];
     for(var i=0;i<t.length;i++)if(t[i][0].test(m))return L(t[i][1],t[i][2]);

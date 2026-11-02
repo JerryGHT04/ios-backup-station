@@ -132,10 +132,38 @@ class AuthTests(unittest.TestCase):
         self.assertEqual(a.post("/api/auth/login", {"password": self.PASSWORD})[0], 429, "even the right password is refused while locked")
 
 
+class CancelCooldownTests(unittest.TestCase):
+    def setUp(self):
+        self.srv = Server(env={"IBS_CANCEL_COOLDOWN_SECONDS": "3"}).start()
+        self.api = Api(self.srv)
+        self.api.post("/api/auth/setup", {"password": "pw"})
+        self.srv.phone(**dict(FRESH_PHONE, usb=True, net=False, backup_seconds=30.0, abort_delay=0.1))
+        wait_for(lambda: self.api.get("/api/status")[1]["device"]["conn"] == "usb", 10, msg="USB device")
+        root = self.api.get("/api/browse?path=")[1]["volumes"][0]["path"]
+        self.api.post("/api/mkdir", {"parent": root, "name": "iphone_backups"})
+        self.assertEqual(self.api.post("/api/config", {"path": root + "/iphone_backups"})[0], 200)
+
+    def tearDown(self):
+        self.srv.stop()
+
+    def test_cancel_temporarily_blocks_new_device_sessions(self):
+        self.assertEqual(self.api.post("/api/backup")[0], 200)
+        wait_for(lambda: self.api.get("/api/status")[1]["job"], 8, 0.1, msg="backup job")
+        self.assertEqual(self.api.post("/api/cancel")[0], 200)
+        wait_for(lambda: self.api.get("/api/status")[1]["job"] is None, 10, msg="cancelled backup")
+        code, body, _ = self.api.post("/api/encryption", {"enable": True, "password": "x"})
+        self.assertEqual(code, 409)
+        self.assertIn("取消备份", body["error"])
+        time.sleep(3.1)
+        self.srv.phone(backup_seconds=1.0)
+        self.assertEqual(self.api.post("/api/backup")[0], 200)
+        wait_for(lambda: self.api.get("/api/status")[1]["job"] is None, 10, msg="backup after cooldown")
+
+
 class FlowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.srv = Server(keep=True).start(); cls.api = Api(cls.srv)
+        cls.srv = Server(keep=True, env={"IBS_CANCEL_COOLDOWN_SECONDS": "0"}).start(); cls.api = Api(cls.srv)
         assert cls.api.post("/api/auth/setup", {"password": "pw"})[0] == 200
         cls.srv.phone(**FRESH_PHONE)
 
@@ -260,7 +288,7 @@ class FlowTests(unittest.TestCase):
         s = self.status(); self.assertEqual(s["history"][0]["status"], "cancelled"); self.assertEqual(s["result"]["status"], "cancelled")
         time.sleep(1.5); self.assertIsNone(self.status()["history"][0]["size"], "a cancelled run must not show the size of the previous backup")
         self.assertEqual(self.api.post("/api/cancel")[0], 409)
-        self.phone(backup_seconds=2.0); s = self.run_backup(); self.assertEqual(s["history"][0]["status"], "ok", "a backup right after a cancel must work")
+        self.phone(backup_seconds=2.0); s = self.run_backup(); self.assertEqual(s["history"][0]["status"], "ok", "a backup can start again after the phone has settled")
 
     def test_08b_written_counts_this_run_only(self):
         """A second backup overwrites the files of the first. 'Written' must start near zero, not at the folder size."""
@@ -376,7 +404,9 @@ class FlowTests(unittest.TestCase):
         for root, _, files in os.walk(os.path.join(self.srv.work, "config")):
             for f in files:
                 with open(os.path.join(root, f), errors="replace") as fh: blob += fh.read()
-        self.assertNotIn("Sup3rSecretBackupPW", blob); self.assertNotIn("pw", [l for l in [json.dumps(json.load(open(os.path.join(self.srv.work, "config", "auth.json"))))] if '"pw"' in l])
+        with open(os.path.join(self.srv.work, "config", "auth.json")) as fh:
+            auth = json.load(fh)
+        self.assertNotIn("Sup3rSecretBackupPW", blob); self.assertNotIn("pw", auth)
 
     def test_20_many_requests(self):
         t0 = time.time(); [self.status() for _ in range(40)]; self.assertLess(time.time() - t0, 10)

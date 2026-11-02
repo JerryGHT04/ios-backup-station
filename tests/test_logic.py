@@ -108,6 +108,47 @@ class ProgressParser(unittest.TestCase):
         self.assertIsNone(self.feed(["Status     Waiting for passcode", "Status     Receiving files"])["pass_since"], "no longer waiting")
 
 
+class BackupRecoveryFeedback(unittest.TestCase):
+    def test_passcode_wait_copy_changes_to_neutral_preparation_after_a_pause(self):
+        job = {"status": "Waiting for passcode to be entered on the device", "pass_since": 100.0}
+        self.assertIn("waiting for passcode", server.backup_display_status(job, now=110).lower())
+        status = server.backup_display_status(job, now=120)
+        self.assertIn("如已输入", status)
+        self.assertIn("如未输入", status)
+
+    def test_cancelled_device_is_blocked_for_two_minutes(self):
+        old = server.CANCEL_COOLDOWNS.get(U)
+        try:
+            server.CANCEL_COOLDOWNS[U] = 220.0
+            self.assertIn("80 秒", server.cancel_cooldown_error(U, now=140.0))
+            self.assertIsNone(server.cancel_cooldown_error(U, now=220.0))
+            self.assertNotIn(U, server.CANCEL_COOLDOWNS)
+        finally:
+            if old is None:
+                server.CANCEL_COOLDOWNS.pop(U, None)
+            else:
+                server.CANCEL_COOLDOWNS[U] = old
+
+    def test_backup_start_returns_cooldown_instead_of_calling_device(self):
+        old = server.CANCEL_COOLDOWNS.get(U)
+        try:
+            server.CANCEL_COOLDOWNS[U] = __import__("time").monotonic() + 90
+            device = {"udid": U, "conn": "usb", "paired": True}
+            from unittest.mock import patch
+            with patch.object(server, "device_state", return_value=device), \
+                 patch.object(server, "backup_dir", return_value="/backup"), \
+                 patch.object(server, "_launch_backup") as launch:
+                code, result = server.start_backup(udid=U)
+            self.assertEqual(code, 409)
+            self.assertIn("取消备份", result["error"])
+            launch.assert_not_called()
+        finally:
+            if old is None:
+                server.CANCEL_COOLDOWNS.pop(U, None)
+            else:
+                server.CANCEL_COOLDOWNS[U] = old
+
+
 class RemainingTime(unittest.TestCase):
     """The real idevicebackup2 redraws its progress many times per second. The estimate must still appear."""
 
@@ -216,7 +257,8 @@ class Helpers(unittest.TestCase):
 
     def test_password_hash_and_token(self):
         server.AUTH.update(secret="ab" * 32)
-        tok = server.make_token(); self.assertTrue(server.check_token(tok)); self.assertFalse(server.check_token(tok[:-1] + "0")); self.assertFalse(server.check_token("1.x"))
+        tok = server.make_token(); tampered = tok[:-1] + ("0" if tok[-1] != "0" else "1")
+        self.assertTrue(server.check_token(tok)); self.assertFalse(server.check_token(tampered)); self.assertFalse(server.check_token("1.x"))
         self.assertEqual(server.hash_pw("x", "cd" * 16), server.hash_pw("x", "cd" * 16)); self.assertNotEqual(server.hash_pw("x", "cd" * 16), server.hash_pw("y", "cd" * 16))
 
 

@@ -3,8 +3,9 @@
 The web application in this repository is MIT licensed (see `LICENSE`). The isolated
 `app/restore_worker.py` is GPL-3.0-only (see `LICENSE.restore`) and uses pymobiledevice3 through its Python API.
 The web application communicates with that worker through JSON on standard input/output.
-The Docker image that the `Dockerfile` builds also
-contains other people's software. It is **not** part of this repository: the `Dockerfile` downloads it from the
+The MIT license in `LICENSE` covers the files in this repository only. The Docker image built from it also
+contains other people's software under the separate licenses listed below. It is **not** part of this repository:
+the `Dockerfile` downloads it from the
 upstream projects while building, and the image uses the libraries as shared libraries (`/usr/local/lib`), so they
 can be replaced by rebuilding with a different upstream version.
 

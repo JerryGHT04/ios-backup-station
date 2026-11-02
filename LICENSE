@@ -19,8 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-This license covers the files in this repository only. The Docker image built
-from it also contains software from other projects (libimobiledevice, libplist,
-libusbmuxd, libimobiledevice-glue, libtatsu, libgeneral, usbmuxd2, Debian
-packages), each under its own license. See THIRD_PARTY_NOTICES.md.

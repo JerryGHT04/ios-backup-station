@@ -94,7 +94,7 @@ Settings in `.env`:
 | `CONFIG_LOCATION` | `./config` | Settings, web password, history. **Keep it.** |
 | `LOCKDOWN_LOCATION` | `./lockdown` | Pairing records of your devices. **Keep it**, otherwise you pair again. |
 | `APT_MIRROR` | empty | Build with a mirror if downloads are slow, for example `mirrors.ustc.edu.cn` |
-| `IBS_IMAGE` | empty | A prebuilt image (once one is published), skips the build on the NAS |
+| `IBS_IMAGE` | empty | Optional prebuilt image, for example `ghcr.io/jerryght04/ios-backup-station:v0.2.0`; skips the build on the NAS |
 
 ### From a NAS Docker app
 
@@ -110,6 +110,8 @@ On fnOS the project shows up in the Docker app's Compose list after you start it
 6. For nightly backups, set a schedule.
 
 The **Setup check** on the page tells you what is still missing, for example when the backup folder is not really mounted into the container.
+
+If downloading or building the repository is unreliable in your region, download the source archive from the [v0.2.0 release](https://github.com/JerryGHT04/ios-backup-station/releases/tag/v0.2.0) and set `IBS_IMAGE=ghcr.io/jerryght04/ios-backup-station:v0.2.0` in `.env`. Then run `docker compose pull && docker compose up -d`; this uses the published image instead of building it on the NAS. The image is multi-architecture (amd64 and arm64).
 
 ## 3. Features (screenshots)
 
@@ -225,7 +227,7 @@ The container runs as root. At run time it **does not need internet access** (bu
 | Browsers | Safari on an iPhone and an iPad; Chrome on Linux for the automated tests |
 | Resource use | About 1% of one CPU core and about 19 MiB of RAM while idle |
 
-**Verified on real hardware**: USB detection and pairing; turning on Wi-Fi sync; finding the phone over Wi-Fi and switching between USB and Wi-Fi; turning on backup encryption; opening the web interface on the phone and the iPad; starting and cancelling a backup; **complete encrypted backups over Wi-Fi and USB** (an iPhone, about 131 GB, and an iPad, about 33 GB); deleting a backup; and **a complete direct restore from a 123.6 GB encrypted NAS backup to the same iPhone 15 running iOS 27.0, reaching the home screen**.
+**Verified on real hardware**: USB detection and pairing; turning on Wi-Fi sync; finding the phone over Wi-Fi and switching between USB and Wi-Fi; turning on backup encryption; opening the web interface on the phone and the iPad; starting and cancelling a backup; **complete encrypted backups over Wi-Fi and USB** (an iPhone, about 140.6 GB, and an iPad, about 35.4 GB); deleting a backup; and **a complete direct restore from an approximately 132.7 GB (123.6 GiB) encrypted NAS backup to the same iPhone 15 running iOS 27.0, reaching the home screen**.
 
 **Not verified yet (do not assume they work)**
 
@@ -234,12 +236,15 @@ The container runs as root. At run time it **does not need internet access** (bu
 - The automatic choice of layout when you tap Request Desktop Website, and the iPad getting the phone layout: the decision logic was tested in simulation, the behaviour on real devices has not been checked item by item.
 - Other NAS brands (Synology, QNAP, Unraid, TrueNAS, ...), arm64, other iOS versions.
 
-**Automated tests** (no device needed: a fake set of libimobiledevice commands drives the real server code): 34 API tests, 12 browser tests (sign-in, every screen, cancelling, XSS, no sideways scrolling at any width, every control has a name) and 26 pure-logic tests (schedule, watchdogs, progress parsing, self-check). See [Development and tests](#13-development-and-tests). They catch mistakes in our own logic but **are no substitute for real hardware**.
+**Automated tests** (no device needed: a fake set of libimobiledevice commands drives the real server code): 39 API tests, 13 browser tests (sign-in, every screen, cancelling, XSS, no sideways scrolling at any width, every control has a name) and 35 pure-logic tests (schedules, watchdogs, progress parsing, cooldowns and self-check). See [Development and tests](#13-development-and-tests). They catch mistakes in our own logic but **are no substitute for real hardware**.
 
 ## 6. Known limitations
 
 - **No resume.** If a backup is interrupted (the device leaves Wi-Fi, the cable is pulled, you leave home), the files already written stay, but next time the device compares again and sends what is needed; the interrupted part has to be sent again. Do the first full backup at home over USB in one go.
-- **One device is handled at a time.** With several devices visible you pick one with the switcher next to the device name (desktop layout; the phone layout has none yet). Backups do not run in parallel, and a **scheduled backup only runs for the device that is selected**. Backup folder and schedule are stored per device.
+- **One backup or restore runs at a time.** The device list, connection actions and schedules are per device, but backup jobs are serialized to avoid competing MobileBackup2 sessions. On desktop and phone layouts, use the device picker to switch the selected device. Backup folder and schedule are stored per device.
+- **A cancelled incremental backup's previous snapshot has not been verified on real hardware.** The backup tool uses snapshot folders, but this exact interruption case has not been tested with a real phone; inspect the backup before relying on it as the only copy.
+- **A backup can be larger than the used-storage figure shown by iOS.** Filesystem clones and compression do not carry over into the backup, so leave extra NAS space.
+- **Sizes use decimal units** (1 GB = 1,000,000,000 bytes), matching the storage units shown by iOS and NAS disks.
 - **A locked device may ask for its passcode.** Right after a restart, before the first unlock, a backup always asks; otherwise it depends on the device and has not been tried overnight yet.
 - **No browsing of single files.** It is a full device backup that can only be restored as a whole.
 - Direct restore is available from the NAS web page over USB. Apple Devices/iTunes on Windows or Finder on a Mac remain alternatives.
@@ -263,8 +268,11 @@ The container cannot see your folder, so backups would be written inside the con
 **The connection shown is wrong after switching Wi-Fi band or the USB cable**
 usbmuxd2 sometimes does not rediscover a device, so the service has two watchdogs: a device on the USB bus that usbmuxd2 does not list gets usbmuxd2 restarted after 3 seconds; a phone that is reachable on the LAN but not listed after about 8 seconds (1 second right after a cable was pulled). Restarting usbmuxd2 takes about twenty seconds on real hardware, so the whole thing can take half a minute. Check Connection triggers it on demand.
 
-**A backup starts and waits for "enter the passcode on the device"**
-The device waits for you to unlock it and enter its passcode. A scheduled backup has nobody to do that and gives up after 5 minutes, then tries again.
+**A backup starts and waits for the device passcode**
+Unlock the device and enter its passcode. If the status stays quiet after 15 seconds, the page says that the phone may be preparing the backup; it also reminds you to unlock it if you have not entered the passcode. A scheduled backup gives up after 5 minutes of waiting and retries later.
+
+**A new operation fails right after cancelling a backup**
+The device may need time to finish closing its previous backup session. The app blocks new backup, restore, pairing, Wi-Fi sync and encryption operations for that device for up to two minutes and shows the remaining wait. Keep the device unlocked; if it still fails after the wait, reconnect USB.
 
 **I forgot the web password**
 Delete `config/auth.json` in the project folder on the NAS, restart the container and set a new one. This does **not** affect the backups or the backup password on the device.
@@ -280,7 +288,7 @@ Scheduled backups use the NAS's time zone; the compose file mounts `/etc/localti
 
 ## 8. Restoring a backup
 
-**Experimental: Restore directly from NAS.** We tested a 123.6 GB encrypted backup on an iPhone 15 running iOS 27.0 and confirmed the phone reached the home screen. More testing is needed across other devices, iOS versions, and backup conditions. We welcome community testing; please report the device model, iOS version, and whether the restore completed successfully. A backup can only be restored to the device it came from, and the target iOS version must be at least as new as the backup. Keep the USB connection during restore. After receiving the data, the phone restarts; the NAS cannot confirm completion while that happens. Wait for the phone to reach iOS, unlock it, and check the data before clicking **Confirm Restore Success** in the history.
+**Experimental: Restore directly from NAS.** We tested an approximately 132.7 GB (123.6 GiB) encrypted backup on an iPhone 15 running iOS 27.0 and confirmed the phone reached the home screen. More testing is needed across other devices, iOS versions, and backup conditions. We welcome community testing; please report the device model, iOS version, and whether the restore completed successfully. A backup can only be restored to the device it came from, and the target iOS version must be at least as new as the backup. Keep the USB connection during restore. After receiving the data, the phone restarts; the NAS cannot confirm completion while that happens. Wait for the phone to reach iOS, unlock it, and check the data before clicking **Confirm Restore Success** in the history.
 
 How restore works: the restore worker runs on the NAS, while Apple's BackupAgent2 on the iPhone decrypts and applies the data. The phone requests manifests and files in batches over Apple's MobileBackup2 protocol; the NAS reads the requested content from the original backup and sends it to the phone over USB/usbmuxd. Before starting, the NAS verifies the backup password and reads the encrypted manifest; it does not first decrypt the entire photo and app-data payload onto the NAS. The phone processes the received data, completes setup, and restarts. While the phone restarts, the NAS cannot tell whether iOS finished applying the restore, so **“Transfer complete” means only that protocol transfer ended; it does not mean the restore succeeded**. Wait until the phone reaches the lock or home screen, unlock it, and check the data. Then click **Confirm Restore Success** in the history; only then does the entry turn green as **Restore successful**.
 

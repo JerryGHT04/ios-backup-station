@@ -27,6 +27,10 @@ PORT = int(os.environ.get("PORT", "8899"))
 STATE_DIR = os.environ.get("STATE_DIR", "/config")
 USBMUXD_MODE_FILE = "/run/ios-backup-station-usbmuxd.mode"
 USBMUXD_RUNNING_FILE = "/run/ios-backup-station-usbmuxd.running"
+try:
+    CANCEL_COOLDOWN_SECONDS = max(0, int(os.environ.get("IBS_CANCEL_COOLDOWN_SECONDS", "120")))
+except ValueError:
+    CANCEL_COOLDOWN_SECONDS = 120
 HIST_FILE = os.path.join(STATE_DIR, "history.json")
 CONF_FILE = os.path.join(STATE_DIR, "settings.json")
 AUTH_FILE = os.path.join(STATE_DIR, "auth.json")
@@ -65,6 +69,7 @@ JOB = None
 RESULT = None
 HISTORY = []
 DIRSIZE = {}                      # UDID -> bytes used by that device's backup folder
+CANCEL_COOLDOWNS = {}             # udid -> monotonic deadline after a cancelled backup
 
 
 def log(msg):
@@ -83,6 +88,27 @@ def run(argv, env=None, timeout=15):
         return 124, b""
     except FileNotFoundError:
         return 127, b""
+
+
+def cancel_cooldown_error(udid, now=None):
+    """Avoid sending a new MobileBackup2 command while iOS is unwinding a cancelled backup."""
+    with lock:
+        deadline = CANCEL_COOLDOWNS.get(udid, 0)
+        remaining = max(0, int(math.ceil(deadline - (time.monotonic() if now is None else now))))
+        if remaining:
+            return "手机刚取消备份，正在结束上一次操作。请保持解锁并等待约 %d 秒后重试；若仍失败，请重新连接 USB。" % remaining
+        CANCEL_COOLDOWNS.pop(udid, None)
+        return None
+
+
+def backup_display_status(job, now=None):
+    """Avoid leaving the UI saying a passcode is still needed after the device goes quiet."""
+    status = str(job.get("status") or "")
+    since = job.get("pass_since")
+    now = time.time() if now is None else now
+    if since is not None and "passcode" in status.lower() and now - since >= 15:
+        return "如已输入锁屏密码，手机正在准备备份；如未输入，请先解锁手机"
+    return status
 
 
 def usbmuxd_mode():
@@ -746,6 +772,9 @@ def start_backup(source="manual", udid=None):
     d = device_state(udid)
     if not d["udid"] or not d["conn"]:
         return 409, {"error": "未检测到设备"}
+    cooldown_error = cancel_cooldown_error(d["udid"])
+    if cooldown_error:
+        return 409, {"error": cooldown_error}
     if not d["paired"]:
         return 409, {"error": "尚未配对"}
     base = backup_dir(d["udid"])
@@ -802,6 +831,9 @@ def start_restore(data):
     with lock:
         d = dict(DEV)
     udid = d.get("udid")
+    cooldown_error = cancel_cooldown_error(udid) if udid else None
+    if cooldown_error:
+        return 409, {"error": cooldown_error}
     if not udid or udid not in list_ids(False) or d.get("conn") != "usb":
         return 409, {"error": "恢复必须通过 USB 连接目标手机"}
     if not d.get("paired"):
@@ -1237,6 +1269,10 @@ def run_backup(argv, udid, base):
             HISTORY.append(entry)
             save_history()
             RESULT = {"ts": int(ended), "kind": "backup", "udid": udid, "status": entry["status"], "error": entry["error"]}
+        if cancelled:
+            with lock:
+                CANCEL_COOLDOWNS[udid] = time.monotonic() + CANCEL_COOLDOWN_SECONDS
+            log("device operation cooldown started for %d seconds after cancelled backup" % CANCEL_COOLDOWN_SECONDS)
     finally:
         with lock:
             JOB = None
@@ -1374,6 +1410,9 @@ def cancel_job():
 def set_encryption(enable, password):
     with lock:
         d = dict(DEV)
+    cooldown_error = cancel_cooldown_error(d.get("udid")) if d.get("udid") else None
+    if cooldown_error:
+        return 409, {"error": cooldown_error}
     if not d["conn"] or not d["paired"]:
         return 409, {"error": "请先连接并配对设备"}
     if not backup_dir(d["udid"]):
@@ -1424,6 +1463,9 @@ def do_pair(udid=None):
     d = target_device(udid)
     if d is None:
         return 404, {"error": "不认识这台设备"}
+    cooldown_error = cancel_cooldown_error(d["udid"])
+    if cooldown_error:
+        return 409, {"error": cooldown_error}
     if d["conn"] != "usb":
         return 409, {"error": "配对需要 USB 连接"}
     rc, out = run(["idevicepair", "-u", d["udid"], "pair"], timeout=90)
@@ -1437,6 +1479,9 @@ def do_wifi_sync(enable, udid=None):
     d = target_device(udid)
     if d is None:
         return 404, {"error": "不认识这台设备"}
+    cooldown_error = cancel_cooldown_error(d["udid"])
+    if cooldown_error:
+        return 409, {"error": cooldown_error}
     if d["conn"] != "usb" or not d["paired"]:
         return 409, {"error": "开启 Wi-Fi 同步需要 USB 连接并已配对"}
     rc, out = run(["wifi-sync", d["udid"], "on" if enable else "off"], timeout=20)
@@ -1796,7 +1841,8 @@ def build_status():
     elif job:
         elapsed = time.time() - job["started"]
         j = {"running": True, "kind": job["kind"], "pct": job["pct"], "msg": job["msg"],
-             "status": job["status"], "file": job["file"], "bytes": job["bytes"], "speed": job.get("speed"),
+             "status": backup_display_status(job) if job.get("kind") == "backup" else job["status"],
+             "file": job["file"], "bytes": job["bytes"], "speed": job.get("speed"),
              "elapsed": int(elapsed), "eta": int(job["eta"]) if job["eta"] is not None else None,
              "totalEta": int(job["totalEta"]) if job.get("totalEta") is not None else None,
              "way": job["way"], "cancelling": job["cancel"],
